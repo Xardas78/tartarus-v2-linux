@@ -1,0 +1,15 @@
+# 99-tartarus.rules
+# Grants the "tartarus" group write access to the hid-tartarus sysfs profile files,
+# so the configurator tool does not need root/sudo.
+#
+# Setup:
+#   sudo groupadd -f tartarus
+#   sudo usermod -aG tartarus $USER
+#   sudo cp 99-tartarus.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger              # or: unplug/replug the Tartarus V2
+#   (log out and back in once, so your shell picks up the new group membership)
+
+SUBSYSTEM=="hid", DRIVER=="hid-tartarus", \
+    RUN+="/usr/bin/chgrp tartarus /sys%p/profile /sys%p/profile_num /sys%p/profile_count /sys%p/intf_type", \
+    RUN+="/usr/bin/chmod 0664 /sys%p/profile /sys%p/profile_num"
