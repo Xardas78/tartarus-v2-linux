@@ -10,25 +10,33 @@ Razer bietet keine offizielle Linux-Unterstützung für die Tartarus V2 (Synapse
 Dieses Projekt baut auf dem quelloffenen Kernel-Treiber von
 [Drayux/Tartarus](https://github.com/Drayux/Tartarus) auf und ergänzt ihn um:
 
+- Modifier-Tasten (Strg/Shift/Alt/Meta) als Teil eines Binds, z.B. Strg+1 auf eine Taste legen
+- einen konfigurierbaren Mausrad-Klick (Taste, Profilwechsel, inkl. Modifier)
 - ein sauberes Python-Backend (`tartarus_backend.py`) für die sysfs-Schnittstelle des Treibers
-- eine native Qt/PySide6-GUI (`tartarus_gui.py`) zur Bearbeitung der 8 Geräteprofile,
-  inkl. Live-Anzeige gedrückter Tasten während der Konfiguration
+- eine native Qt/PySide6-GUI (`tartarus_gui.py`) zur Bearbeitung der 8 Geräteprofile direkt
+  auf einer Abbildung des Geräts (statt einem generischen Tasten-Raster), inkl. Live-Anzeige
+  gedrückter Tasten während der Konfiguration
 - eine udev-Regel für Schreibzugriff ohne root
 
 ## Komponenten
 
 | Datei | Zweck |
 |---|---|
-| `tartarus.c`, `module.h`, `keymap.h`, `dkms.conf`, `Makefile` | Kernel-Treiber (Original von Drayux, unverändert) |
-| `tartarus_backend.py` | Python-API für Profile lesen/schreiben |
+| `tartarus.c`, `module.h`, `keymap.h`, `dkms.conf`, `Makefile` | Kernel-Treiber (basiert auf Drayux/Tartarus, um Modifier-Binds und Mausrad-Profile erweitert) |
+| `tartarus_backend.py` | Python-API für Profile lesen/schreiben (Tastatur + Maus) |
 | `tartarus_gui.py` | Grafische Oberfläche |
+| `tartarus_v2.svg` | Geräte-Grafik für die GUI (benannte Elemente `Key_1`–`Key_20`, `Circle`, `Cross`, `Scroll`) |
+| `tartarus_svg.py` | Liest Position/Form/Drehung der Tasten direkt aus `tartarus_v2.svg` |
+| `tartarus_layout.py` | Fallback-Koordinaten für Elemente, die (noch) nicht in der SVG benannt sind |
 | `99-tartarus.rules` | udev-Regel (Gruppe `tartarus`) |
 
 ## Status
 
-Alle 25 physischen Tasten (1-20, Circle, Steuerkreuz) vollständig getestet und unterstützt.
-Mausrad (Scrollen + Mittelklick) funktioniert mit Festverhalten, ist aber noch nicht
-profilabhängig konfigurierbar (Treiber-seitige Limitierung, siehe unten).
+Alle 25 physischen Tasten (1-20, Circle, Steuerkreuz) sowie der Mausrad-Klick sind vollständig
+getestet und konfigurierbar, inklusive Modifier-Tasten (Strg/Shift/Alt/Meta) pro Bind. Das
+Steuerkreuz (Cross) ist am Gerät eine einzelne 4-Wege-Wippe mit vier unabhängigen Binds
+(Oben/Rechts/Unten/Links) — ein Klick in der GUI öffnet dafür eine kleine Richtungsauswahl.
+Mausrad-Scrollen (hoch/runter) hat weiterhin Festverhalten und ist noch nicht konfigurierbar.
 
 ## Live-Tastenanzeige
 
@@ -50,11 +58,14 @@ physische Taste zurückzuermitteln. Das hat zwei Konsequenzen:
 
 ## Bekannte Einschränkungen
 
-- Mausrad-Profile sind im Treiber nicht implementiert (`profile_show`/`profile_store`
-  haben für `MOUSE_INUM` nur ein `// TODO`)
-- Bind-Format unterstützt keine Modifier-Kombinationen (z.B. Strg+1) in einem einzelnen Bind
+- Mausrad-Scrollen (hoch/runter) ist weiterhin fest verdrahtet, nicht konfigurierbar
+- Makros sind als Bind-Typ vorhanden, aber die Wiedergabe braucht ein separates
+  Userspace-Tool (kein Bestandteil dieses Projekts)
 - Interface 1 (EXT) hat im Original-Treiber keine aktive Funktion (Stub)
 - Live-Tastenanzeige funktioniert nur für Taste- und Makro-Slot-Binds (siehe oben)
+- Profile im alten 2-Byte-Format (vor v0.2, ohne Modifier-Unterstützung) werden beim
+  Einlesen automatisch erkannt und weiterhin unterstützt, aber beim nächsten Speichern
+  ins neue 3-Byte-Format migriert
 
 ## Installation
 
@@ -64,13 +75,30 @@ sudo usermod -aG tartarus $USER
 sudo cp 99-tartarus.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 
-sudo dkms add -m tartarus -v 0.1
-sudo dkms build -m tartarus -v 0.1
-sudo dkms install -m tartarus -v 0.1
+sudo dkms add -m tartarus -v 0.2
+sudo dkms build -m tartarus -v 0.2
+sudo dkms install -m tartarus -v 0.2
 sudo modprobe tartarus
 
 pip install pyside6 evdev   # oder: sudo pacman -S pyside6 python-evdev
 python3 tartarus_gui.py
+```
+
+> Falls der Build fehlschlägt, weil dein Kernel mit clang statt gcc gebaut wurde
+> (`uname -a` zeigt dann meist etwas mit `clang` statt `gcc`), `dkms.conf` baut
+> standardmäßig bereits mit `LLVM=1` — das ist bei aktuellem CachyOS/Arch-Kernel nötig.
+
+### Update von v0.1
+
+Das Profil-Binärformat hat sich geändert (2 → 3 Byte pro Taste, für Modifier-Support).
+Vorhandene v0.1-Profile werden beim Lesen automatisch erkannt, sind also nicht verloren.
+Um den Treiber selbst zu aktualisieren:
+
+```bash
+sudo dkms remove tartarus/0.1 --all
+sudo dkms add -m tartarus -v 0.2
+sudo dkms install -m tartarus -v 0.2
+sudo rmmod tartarus && sudo modprobe tartarus
 ```
 
 ## Lizenz-Hinweis

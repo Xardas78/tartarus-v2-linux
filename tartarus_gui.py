@@ -158,9 +158,10 @@ class KeyMonitorThread(QThread):
     def stop(self) -> None:
         self._stop = True
 
-# Version of this GUI/backend tooling (independent of the kernel module's DKMS
-# version, which stays at the stable 0.1 unless the driver itself changes).
-VERSION = "v0.1"
+# Version of this GUI/backend tooling, kept in step with dkms.conf's
+# PACKAGE_VERSION since both the driver (3-byte binds, mouse profile support)
+# and the GUI (SVG device view) changed together in this release.
+VERSION = "v0.2"
 
 # Only expose bind types the kernel driver actually executes today
 # (SCRIPT/SWKEY/MOUSE_MOVE/MOUSE_WHEEL are stored but currently no-ops - see
