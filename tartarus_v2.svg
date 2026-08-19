@@ -375,7 +375,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        d="M7456 3858 c-9 -12 -16 -41 -16 -63 0 -22 7 -51 16 -63 19 -27 64 -29 87 -4 22 25 23 115 1 136 -23 24 -70 20 -88 -6z m69 -63 c0 -43 -3 -50 -20 -50 -24 0 -41 42 -31 79 5 21 12 27 29 24 19 -3 22 -9 22 -53z"
        id="path88" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_1"
        width="901.69592"
        height="908.35107"
@@ -385,7 +385,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_2"
        width="901.69592"
        height="908.35107"
@@ -395,7 +395,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_3"
        width="901.69592"
        height="908.35107"
@@ -405,7 +405,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_4"
        width="901.69592"
        height="908.35107"
@@ -415,7 +415,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_5"
        width="912.42108"
        height="894.05048"
@@ -425,7 +425,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_6"
        width="889.3103"
        height="906.56628"
@@ -435,7 +435,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_7"
        width="896.16998"
        height="895.04016"
@@ -445,7 +445,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_8"
        width="901.69592"
        height="908.35107"
@@ -455,7 +455,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_9"
        width="901.69592"
        height="908.35107"
@@ -465,7 +465,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_10"
        width="894.54462"
        height="894.05078"
@@ -475,7 +475,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Scroll"
        width="625.24249"
        height="1336.4203"
@@ -485,7 +485,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="268.77734"
        ry="292.56598" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_11"
        width="888.91998"
        height="889.94507"
@@ -495,7 +495,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_12"
        width="871.75134"
        height="885.94116"
@@ -505,7 +505,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="77.144165"
        ry="75.065292" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_13"
        width="886.57288"
        height="891.66455"
@@ -515,7 +515,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_14"
        width="881.22858"
        height="889.48254"
@@ -525,7 +525,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_16"
        width="891.84387"
        height="881.31134"
@@ -535,7 +535,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_17"
        width="847.66028"
        height="882.55536"
@@ -545,7 +545,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="77.144165"
        ry="74.510445" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_18"
        width="849.94415"
        height="898.85028"
@@ -555,7 +555,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_19"
        width="859.61084"
        height="891.85468"
@@ -565,7 +565,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.2;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_15"
        width="878.11151"
        height="894.04993"
@@ -575,7 +575,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        rx="90.704124"
        ry="101.59757" />
     <rect
-       style="opacity:0.25;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:19.0919;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Key_20"
        width="1665.9778"
        height="957.76752"
@@ -584,7 +584,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        transform="matrix(0.76553945,0.64338896,0.61513793,-0.78841951,0,0)"
        ry="146.50444" />
     <ellipse
-       style="opacity:0.25;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:18.3;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Circle"
        transform="matrix(0.8571673,-0.51503808,-0.51503808,-0.8571673,0,0)"
        ry="292.8501"
@@ -620,7 +620,7 @@ Created by potrace 1.16, written by Peter Selinger 2001-2019
        sodipodi:arc-type="arc"
        d="m 8044.3821,-5004.354 a 222.47191,329.91574 0 0 1 -0.018,4.2354" />
     <ellipse
-       style="opacity:0.25;fill:#ff0000;fill-opacity:1;stroke:none;stroke-width:21.0671;stroke-linejoin:round"
+       style="fill:none;stroke:none"
        id="Cross"
        cx="6042.5244"
        cy="-5351.522"
