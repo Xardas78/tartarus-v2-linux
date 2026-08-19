@@ -28,7 +28,11 @@ Dieses Projekt baut auf dem quelloffenen Kernel-Treiber von
 | `tartarus_v2.svg` | Geräte-Grafik für die GUI (benannte Elemente `Key_1`–`Key_20`, `Circle`, `Cross`, `Scroll`) |
 | `tartarus_svg.py` | Liest Position/Form/Drehung der Tasten direkt aus `tartarus_v2.svg` |
 | `tartarus_layout.py` | Fallback-Koordinaten für Elemente, die (noch) nicht in der SVG benannt sind |
-| `99-tartarus.rules` | udev-Regel (Gruppe `tartarus`) |
+| `tartarus_macros.py` | Makro-Datenmodell + Speicherung (`~/.config/tartarus/macros.json`) |
+| `tartarus_macro_gui.py` | Dialog zum Aufnehmen/Bearbeiten eines Makros |
+| `tartarus_macro_daemon.py` | Hintergrunddienst: spielt Makros bei Tastendruck über `uinput` ab |
+| `tartarus-macros.service` | systemd-`--user`-Unit für den Wiedergabe-Dienst |
+| `99-tartarus.rules` | udev-Regeln (Gruppe `tartarus`: Profil-Dateien + `/dev/uinput`) |
 
 ## Status
 
@@ -56,11 +60,41 @@ physische Taste zurückzuermitteln. Das hat zwei Konsequenzen:
 - Fehlt `evdev` oder wird kein passendes Eventgerät gefunden, startet die GUI trotzdem
   normal, nur ohne die Live-Anzeige (Hinweis dazu erscheint in der Statusleiste)
 
+## Makros
+
+Eine Taste mit Bind-Typ **Makro-Slot** lässt den Treiber beim Drücken `KEY_MACRO1`–`KEY_MACRO30`
+statt einer normalen Taste melden (siehe `CTRL_MACRO` in `resolve_event_kbd()`, `tartarus.c`).
+Was dabei tatsächlich passiert, entscheidet der separate Wiedergabe-Dienst:
+
+- **Aufnehmen/Bearbeiten:** Im Bind-Dialog bei „Makro-Slot" auf „Makro-Inhalt
+  aufnehmen/bearbeiten…" klicken. Zwei Wege, auch kombinierbar:
+  - **Live-Aufnahme:** Zielgerät (deine echte Tastatur) auswählen, „Aufnahme starten",
+    Tastenfolge eingeben, „Aufnahme stoppen" — Timing wird automatisch mit aufgezeichnet.
+    Während der Aufnahme wird das gewählte Gerät exklusiv gegriffen (Tasten gehen nicht
+    zusätzlich an den Rest des Desktops).
+  - **Manuell:** Taste + Drücken/Loslassen + Verzögerung einzeln hinzufügen.
+  - Makros werden in `~/.config/tartarus/macros.json` gespeichert, unabhängig vom
+    Geräteprofil (Slot-Nummern 1–30 sind global, wie auf dem Gerät selbst).
+- **Wiedergabe:** Läuft über `tartarus_macro_daemon.py`, ein eigener Hintergrunddienst
+  (nicht Teil von `tartarus_gui.py` — Makros sollen auch ohne offene GUI funktionieren).
+  Er hört auf das Tartarus-Event-Gerät und spielt die passende Tastenfolge über ein
+  virtuelles `uinput`-Tastaturgerät ab. Einrichtung:
+
+  ```bash
+  sudo modprobe uinput   # falls das Modul noch nicht geladen ist
+  # 99-tartarus.rules (siehe Installation) enthält bereits die nötige udev-Regel für /dev/uinput
+
+  mkdir -p ~/.config/systemd/user
+  cp tartarus-macros.service ~/.config/systemd/user/
+  systemctl --user daemon-reload
+  systemctl --user enable --now tartarus-macros.service
+  ```
+
+  Status prüfen: `systemctl --user status tartarus-macros.service`
+
 ## Bekannte Einschränkungen
 
 - Mausrad-Scrollen (hoch/runter) ist weiterhin fest verdrahtet, nicht konfigurierbar
-- Makros sind als Bind-Typ vorhanden, aber die Wiedergabe braucht ein separates
-  Userspace-Tool (kein Bestandteil dieses Projekts)
 - Interface 1 (EXT) hat im Original-Treiber keine aktive Funktion (Stub)
 - Live-Tastenanzeige funktioniert nur für Taste- und Makro-Slot-Binds (siehe oben)
 - Profile im alten 2-Byte-Format (vor v0.2, ohne Modifier-Unterstützung) werden beim

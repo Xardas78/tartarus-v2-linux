@@ -1,0 +1,14 @@
+[Unit]
+Description=Tartarus V2 macro playback (KEY_MACRO1..30 -> uinput)
+After=graphical-session.target
+
+[Service]
+Type=simple
+# %h expands to your home directory. Adjust this path if you cloned the
+# repo somewhere other than ~/tartarus-v2-linux.
+ExecStart=/usr/bin/python3 %h/tartarus-v2-linux/tartarus_macro_daemon.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

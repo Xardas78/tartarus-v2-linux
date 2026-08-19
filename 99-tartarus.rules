@@ -13,3 +13,8 @@
 SUBSYSTEM=="hid", DRIVER=="hid-tartarus", \
     RUN+="/usr/bin/chgrp tartarus /sys%p/profile /sys%p/profile_num /sys%p/profile_count /sys%p/intf_type", \
     RUN+="/usr/bin/chmod 0664 /sys%p/profile /sys%p/profile_num"
+
+# Lets the tartarus-macros playback daemon (tartarus_macro_daemon.py) create a
+# uinput virtual keyboard to replay macros, without running as root. Requires
+# the uinput kernel module (usually already loaded; if not: sudo modprobe uinput).
+KERNEL=="uinput", GROUP="tartarus", MODE="0660"

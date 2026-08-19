@@ -32,6 +32,7 @@ from tartarus_backend import (
 )
 from tartarus_layout import SVG_PATH, SVG_VIEWBOX, load_hitboxes
 from tartarus_svg import Matrix, SvgDocument, compose
+from tartarus_macro_gui import MacroEditDialog
 
 try:
     import evdev
@@ -259,10 +260,11 @@ class KeyMonitorThread(QThread):
     def stop(self) -> None:
         self._stop = True
 
-# Version of this GUI/backend tooling, kept in step with dkms.conf's
-# PACKAGE_VERSION since both the driver (3-byte binds, mouse profile support)
-# and the GUI (SVG device view) changed together in this release.
-VERSION = "v0.2"
+# Version of this GUI/backend tooling. Tracked separately from dkms.conf's
+# PACKAGE_VERSION (the kernel module's own version) rather than kept in step
+# with it - most releases only touch this Python/Qt side, and bumping the
+# driver version for those would force a needless dkms reinstall.
+VERSION = "v0.3"
 
 # Only expose bind types the kernel driver actually executes today
 # (SCRIPT/SWKEY/MOUSE_MOVE/MOUSE_WHEEL are stored but currently no-ops - see
@@ -356,10 +358,17 @@ class KeyEditDialog(QDialog):
         self.stack.addWidget(self._wrap("Ziel-Profil (dauerhaft wechseln):", self.prof_spin))
 
         # MACRO - macro slot
+        macro_page = QWidget()
+        macro_layout = QVBoxLayout(macro_page)
+        macro_layout.setContentsMargins(0, 0, 0, 0)
         self.macro_combo = QComboBox()
         self.macro_combo.addItems(MACRO_NAMES)
-        self.stack.addWidget(self._wrap(
-            "Makro-Slot (Wiedergabe braucht separates Userspace-Tool):", self.macro_combo))
+        macro_layout.addWidget(self._wrap(
+            "Makro-Slot (Wiedergabe braucht den tartarus-macros-Dienst):", self.macro_combo))
+        edit_macro_btn = QPushButton("Makro-Inhalt aufnehmen/bearbeiten…")
+        edit_macro_btn.clicked.connect(self._edit_macro_content)
+        macro_layout.addWidget(edit_macro_btn)
+        self.stack.addWidget(macro_page)
 
         layout.addWidget(self.stack)
 
@@ -401,6 +410,14 @@ class KeyEditDialog(QDialog):
                 self.macro_combo.setCurrentIndex(max(0, bind.data - 1))
             except Exception:
                 pass
+
+    def _edit_macro_content(self) -> None:
+        """Opens the record/edit dialog for whichever macro slot is currently
+        selected in macro_combo - this only touches tartarus_macros.json (the
+        playback daemon's data), not the bind itself, so it works independent
+        of whether/how this dialog gets closed afterwards."""
+        slot = self.macro_combo.currentIndex() + 1
+        MacroEditDialog(self, slot).exec()
 
     def _accept(self) -> None:
         bt = self.type_box.currentData()
