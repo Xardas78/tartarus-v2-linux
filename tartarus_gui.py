@@ -46,14 +46,15 @@ MACRO_KEYCODE_OFFSET = 0x28F
 DEVICE_VIEW_WIDTH = 420   # device image display size; sidebars sit either side of it
 
 # The stock product graphic, used as the device-view background instead of the
-# traced line art (tartarus_v2.svg) - same aspect ratio as SVG_VIEWBOX (both
-# come from the same source image), so overlay geometry computed from the SVG
-# still lines up. device_bg.png is T2.png with its white background keyed out
-# to transparent (see the alpha channel - regenerate by re-running the PIL
-# snippet from that change if T2.png is ever replaced), so the scene's own
-# background - which follows the app's palette/theme - shows through instead
-# of a flat white box. Falls back to rendering the SVG itself if missing.
-DEVICE_PHOTO_PATH = SVG_PATH.parent / "device_bg.png"
+# traced line art (tartarus_v2.svg). Same 912x1170 viewBox as tartarus_v2.svg
+# (both artworks share that coordinate space), so overlay geometry computed
+# from tartarus_v2.svg still lines up. It's natively transparent (own artwork,
+# not a keyed-out photo), so the scene's own background - which follows the
+# app's palette/theme - shows through instead of a flat box. Rendered fresh at
+# whatever pixel size is needed (see _build_device_view()) rather than loaded
+# as a fixed-resolution raster, so it stays crisp at any DEVICE_VIEW_WIDTH or
+# window size. Falls back to rendering tartarus_v2.svg itself if missing.
+DEVICE_BG_SVG_PATH = SVG_PATH.parent / "device_bg.svg"
 
 # Compass-style D-pad graphic (own artwork, hand-built to a similar layout as
 # Razer Synapse's own D-PAD dialog - not a copy of it) shown in _edit_cross()'s
@@ -545,18 +546,19 @@ class MainWindow(QMainWindow):
             svg_doc = SvgDocument(SVG_PATH)
         except ET.ParseError:
             svg_doc = None
-        self._svg_doc = svg_doc  # reused by _edit_cross() to crop a preview image
 
         img_scale = DEVICE_VIEW_WIDTH / SVG_VIEWBOX[0]
         image_w, image_h = DEVICE_VIEW_WIDTH, SVG_VIEWBOX[1] * img_scale
 
-        photo = QPixmap(str(DEVICE_PHOTO_PATH))
-        if not photo.isNull():
-            # Force the exact target size rather than scaledToWidth() preserving
-            # the photo's own aspect - they're only equal to ~1e-4, and overlay
-            # geometry below is laid out against (image_w, image_h) exactly.
-            pixmap = photo.scaled(round(image_w), round(image_h),
-                                   Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        bg_renderer = QSvgRenderer(str(DEVICE_BG_SVG_PATH))
+        if bg_renderer.isValid():
+            # Rendered fresh at the target size (not loaded as a fixed-resolution
+            # raster and scaled up), so it stays crisp regardless of DEVICE_VIEW_WIDTH.
+            pixmap = QPixmap(round(image_w), round(image_h))
+            pixmap.fill(Qt.transparent)
+            bg_painter = QPainter(pixmap)
+            bg_renderer.render(bg_painter)
+            bg_painter.end()
         else:
             pixmap = QPixmap(round(image_w), round(image_h))
             pixmap.fill(Qt.white)
