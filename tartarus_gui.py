@@ -10,20 +10,27 @@ Run: python3 tartarus_gui.py
 
 from __future__ import annotations
 
+import math
 import select
 import sys
+import xml.etree.ElementTree as ET
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QRectF, Qt, QThread, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap, QTransform
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox, QCheckBox, QDialog, QDialogButtonBox,
     QMessageBox, QFileDialog, QStatusBar, QFrame, QStackedWidget,
+    QGraphicsView, QGraphicsScene, QGraphicsObject, QStyleOptionGraphicsItem,
 )
 
 from tartarus_backend import (
     TartarusDevice, TartarusMouseDevice, Profile, MouseProfile, Bind, BindType, Mod, MOD_LABELS,
     KEY_LABELS, KEY_NAME_TO_CODE, KEY_CODE_TO_NAME, MACRO_NAMES,
 )
+from tartarus_layout import SVG_PATH, SVG_VIEWBOX, load_hitboxes
+from tartarus_svg import Matrix, SvgDocument, compose
 
 try:
     import evdev
@@ -35,8 +42,82 @@ except ImportError:
 # on KEY_MACRO1 .. KEY_MACRO30, 0x290-0x2AD).
 MACRO_KEYCODE_OFFSET = 0x28F
 
-# Visual style applied to a key button while its mapped evdev keycode is held down.
-KEY_ACTIVE_STYLE = "background-color: #2ecc71; color: black; font-weight: bold;"
+DEVICE_VIEW_WIDTH = 480   # display size; height follows from the SVG viewBox aspect ratio
+
+# Overlay fill/outline per key state (brush color, pen color, pen width). Region
+# hitboxes themselves are read off the SVG's named elements at build time (see
+# _build_device_view()); tartarus_layout.py is only the fallback for elements
+# the SVG doesn't (yet) name.
+STATE_UNSET = (QColor(255, 255, 255, 25), QColor(0, 0, 0, 90), 1)
+STATE_SET = (QColor(52, 152, 219, 70), QColor(41, 128, 185, 180), 1)
+STATE_ACTIVE = (QColor(46, 204, 113, 160), QColor(46, 204, 113, 255), 2)
+
+
+class KeyRegionItem(QGraphicsObject):
+    """A clickable, rotatable overlay region on the device view (one per
+    physical key, plus one for the wheel-click). QGraphicsObject is Qt's own
+    QObject+QGraphicsItem hybrid base (for exactly this - a graphics item that
+    needs signals), so unlike QGraphicsRectItem it draws nothing on its own -
+    paint()/boundingRect() below do that."""
+
+    clicked = Signal()
+
+    def __init__(self, local_rect: QRectF, transform: QTransform, shape: str = "rect"):
+        super().__init__()
+        self._local_rect = local_rect
+        self._shape_kind = shape  # "rect" or "ellipse"
+        self._brush = QBrush(STATE_UNSET[0])
+        self._pen = QPen(STATE_UNSET[1], STATE_UNSET[2])
+        # The full local-to-scene matrix (not just a rotation angle) so shapes
+        # with shear or non-uniform scale (see make_region() in
+        # _build_device_view()) still render/hit-test exactly like their
+        # source SVG shape.
+        self.setTransform(transform)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_state(self, state: tuple[QColor, QColor, int]) -> None:
+        brush_color, pen_color, pen_width = state
+        self._brush = QBrush(brush_color)
+        self._pen = QPen(pen_color, pen_width)
+        self.update()
+
+    def boundingRect(self) -> QRectF:
+        return self._local_rect
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        if self._shape_kind == "ellipse":
+            path.addEllipse(self.boundingRect())
+        else:
+            path.addRect(self.boundingRect())
+        return path
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget=None) -> None:
+        painter.setBrush(self._brush)
+        painter.setPen(self._pen)
+        if self._shape_kind == "ellipse":
+            painter.drawEllipse(self.boundingRect())
+        else:
+            painter.drawRect(self.boundingRect())
+
+    def mousePressEvent(self, event) -> None:
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+def apply_state(item, state: tuple[QColor, QColor, int]) -> None:
+    """Applies a STATE_* tuple to either a KeyRegionItem or (fallback grid) a
+    QPushButton, so callers don't need to care which one they got."""
+    if isinstance(item, KeyRegionItem):
+        item.set_state(state)
+        return
+    brush, pen, width = state
+    item.setStyleSheet(
+        f"background-color: rgba({brush.red()},{brush.green()},{brush.blue()},{brush.alpha()}); "
+        f"border: {width}px solid rgba({pen.red()},{pen.green()},{pen.blue()},{pen.alpha()}); "
+        "border-radius: 6px;"
+    )
 
 
 class KeyMonitorThread(QThread):
@@ -277,7 +358,8 @@ class MainWindow(QMainWindow):
             except Exception:
                 self.mouse_profile = None
         self.dirty = False
-        self.key_buttons: list[QPushButton] = []
+        self.key_hitboxes, self.mouse_hitbox = load_hitboxes()
+        self.key_buttons: list[KeyRegionItem | QPushButton] = []
         self._code_to_indices: dict[int, list[int]] = {}
         self._active_indices: set[int] = set()
 
@@ -318,41 +400,133 @@ class MainWindow(QMainWindow):
 
         outer.addLayout(top)
 
-        # Key grid: 5 columns x 5 rows, matching PHYSICAL_KEYS / KEY_LABELS order
-        grid = QGridLayout()
+        # Device view: rendered SVG artwork with transparent click-overlay buttons
+        # positioned on top of each physical key (see KEY_HITBOXES / MOUSE_CLICK_HITBOX).
+        device_view = self._build_device_view()
+        outer.addWidget(device_view, alignment=Qt.AlignHCenter)
+
+        note = QLabel("Mausrad hoch/runter: im Treiber noch nicht konfigurierbar.")
+        note.setStyleSheet("color: gray;")
+        outer.addWidget(note, alignment=Qt.AlignHCenter)
+
+        self.setCentralWidget(central)
+        self.setStatusBar(QStatusBar())
+
+        self._build_menu()
+
+    def _build_device_view(self) -> QWidget:
+        """Renders tartarus_v2.svg once to a background pixmap in a QGraphicsScene
+        and lays a clickable KeyRegionItem over each physical key on top of it.
+        Hitboxes are read directly off the SVG's own named elements (Key_1..
+        Key_20, Circle, Cross, Scroll - see tartarus_v2.svg), preferring the
+        exact local geometry + full transform (tartarus_svg.SvgDocument, for
+        <rect>/<circle>/<ellipse> elements with a preserved Inkscape transform)
+        and falling back to QSvgRenderer.boundsOnElement()/transformForElement()
+        (axis-aligned) for plain <path> elements. self.key_hitboxes
+        (tartarus_layout.py / tartarus_hitboxes.json) is only a last-resort
+        fallback for elements the SVG doesn't (yet) name at all. Falls back to
+        the plain 5x5 grid entirely if the SVG can't be loaded at all."""
+        renderer = QSvgRenderer(str(SVG_PATH))
+        if not renderer.isValid():
+            return self._build_fallback_grid()
+
+        try:
+            svg_doc = SvgDocument(SVG_PATH)
+        except ET.ParseError:
+            svg_doc = None
+
+        scale = DEVICE_VIEW_WIDTH / SVG_VIEWBOX[0]
+        view_w, view_h = DEVICE_VIEW_WIDTH, round(SVG_VIEWBOX[1] * scale)
+
+        pixmap = QPixmap(view_w, view_h)
+        pixmap.fill(Qt.white)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+
+        # Kept as an attribute (not just a local) - QGraphicsView.setScene() does not
+        # take Python-visible ownership, so a scene with no surviving Python reference
+        # gets garbage-collected out from under the view, deleting all its items too.
+        self._device_scene = QGraphicsScene(0, 0, view_w, view_h)
+        scene = self._device_scene
+        scene.addPixmap(pixmap)
+
+        display_scale: Matrix = (scale, 0, 0, scale, 0, 0)
+
+        def make_region(element_id: str, fallback_box, shape: str = "rect") -> KeyRegionItem:
+            geometry = svg_doc.local_geometry(element_id) if svg_doc else None
+            if geometry is not None:
+                shape_kind, (x, y, w, h), matrix = geometry
+                local_rect = QRectF(x, y, w, h)
+                final_matrix = compose(display_scale, matrix)
+            elif renderer.elementExists(element_id):
+                bounds = renderer.transformForElement(element_id).mapRect(
+                    renderer.boundsOnElement(element_id))
+                w, h = bounds.width(), bounds.height()
+                local_rect = QRectF(-w / 2, -h / 2, w, h)
+                local_matrix = (1, 0, 0, 1, bounds.center().x(), bounds.center().y())
+                final_matrix = compose(display_scale, local_matrix)
+                shape_kind = shape
+            else:
+                cx, cy, w, h, angle = fallback_box
+                rad = math.radians(angle)
+                cos_a, sin_a = math.cos(rad), math.sin(rad)
+                local_rect = QRectF(-w / 2, -h / 2, w, h)
+                local_matrix = (cos_a, sin_a, -sin_a, cos_a, cx, cy)
+                final_matrix = compose(display_scale, local_matrix)
+                shape_kind = shape
+            item = KeyRegionItem(local_rect, QTransform(*final_matrix), shape=shape_kind)
+            scene.addItem(item)
+            return item
+
+        self.key_buttons = []
+        for i in range(20):
+            item = make_region(f"Key_{i + 1}", self.key_hitboxes[i])
+            item.clicked.connect(lambda checked=False, idx=i: self._edit_key(idx))
+            self.key_buttons.append(item)
+
+        circle_item = make_region("Circle", self.key_hitboxes[20], shape="ellipse")
+        circle_item.clicked.connect(lambda: self._edit_key(20))
+        self.key_buttons.append(circle_item)
+
+        # The 4-way thumb rocker is one physical part / one SVG shape, but four
+        # independent binds (RZKEY_THMB_U/R/D/L) - clicking it opens a small
+        # chooser instead of directly editing a single physical key.
+        cross_item = make_region("Cross", self.key_hitboxes[21], shape="ellipse")
+        cross_item.clicked.connect(self._edit_cross)
+        self.key_buttons.extend([cross_item] * 4)
+
+        self.wheel_click_btn = make_region("Scroll", self.mouse_hitbox)
+        self.wheel_click_btn.clicked.connect(self._edit_wheel_click)
+        self.wheel_click_btn.setEnabled(self.mouse_profile is not None)
+
+        view = QGraphicsView(scene)
+        view.setFixedSize(view_w + 2, view_h + 2)
+        view.setRenderHint(QPainter.Antialiasing)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setFrameShape(QFrame.NoFrame)
+        return view
+
+    def _build_fallback_grid(self) -> QWidget:
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
         grid.setSpacing(8)
+        self.key_buttons = []
         for i, label in enumerate(KEY_LABELS):
             btn = QPushButton()
             btn.setMinimumSize(140, 70)
             btn.clicked.connect(lambda checked=False, idx=i: self._edit_key(idx))
             self.key_buttons.append(btn)
             grid.addWidget(btn, i // 5, i % 5)
-        outer.addLayout(grid)
-
-        # Mouse wheel row. Scroll direction is still hardcoded in the driver
-        # (resolve_event_mouse() in tartarus.c) - only the wheel-click bind is
-        # configurable so far, via MouseProfile.click / MOUSE_CLICK_IDX.
-        wheel_row = QHBoxLayout()
-        for wheel_label in ("Mausrad hoch", "Mausrad runter"):
-            wheel_btn = QPushButton(f"{wheel_label}\n(im Treiber noch nicht unterstützt)")
-            wheel_btn.setMinimumSize(140, 70)
-            wheel_btn.setEnabled(False)
-            wheel_row.addWidget(wheel_btn)
 
         self.wheel_click_btn = QPushButton("Mausrad-Klick")
         self.wheel_click_btn.setMinimumSize(140, 70)
         self.wheel_click_btn.clicked.connect(self._edit_wheel_click)
         self.wheel_click_btn.setEnabled(self.mouse_profile is not None)
-        if self.mouse_profile is None:
-            self.wheel_click_btn.setText("Mausrad-Klick\n(Maus-Interface nicht gefunden)")
-        wheel_row.addWidget(self.wheel_click_btn)
+        grid.addWidget(self.wheel_click_btn, len(KEY_LABELS) // 5 + 1, 0)
 
-        outer.addLayout(wheel_row)
-
-        self.setCentralWidget(central)
-        self.setStatusBar(QStatusBar())
-
-        self._build_menu()
+        return grid_widget
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("&Datei")
@@ -381,14 +555,19 @@ class MainWindow(QMainWindow):
         color = "#%02x%02x%02x" % (255 if r else 0, 255 if g else 0, 255 if b else 0)
         self.led_preview.setStyleSheet(f"background-color: {color}; border: 1px solid #888;")
 
+        self._btn_base_state = []
         for i, btn in enumerate(self.key_buttons):
             bind = self.profile.get_physical(i)
-            btn.setText(f"{KEY_LABELS[i]}\n{bind.describe()}")
+            state = STATE_UNSET if bind.type == BindType.NOP else STATE_SET
+            self._btn_base_state.append(state)
+            btn.setToolTip(f"{KEY_LABELS[i]}: {bind.describe()}")
+            apply_state(btn, state)
 
         if self.mouse_profile is not None:
             click = self.mouse_profile.click
             desc = click.describe() if click.type != BindType.NOP else "Mittelklick (Standard)"
-            self.wheel_click_btn.setText(f"Mausrad-Klick\n{desc}")
+            self.wheel_click_btn.setToolTip(f"Mausrad-Klick: {desc}")
+            apply_state(self.wheel_click_btn, STATE_UNSET if click.type == BindType.NOP else STATE_SET)
 
         self._active_indices.clear()
         self._rebuild_key_event_map()
@@ -447,7 +626,8 @@ class MainWindow(QMainWindow):
             self._active_indices.add(index)
         else:
             self._active_indices.discard(index)
-        self.key_buttons[index].setStyleSheet(KEY_ACTIVE_STYLE if active else "")
+        state = STATE_ACTIVE if active else self._btn_base_state[index]
+        apply_state(self.key_buttons[index], state)
 
     # -- Actions --
     def _edit_key(self, index: int) -> None:
@@ -457,6 +637,39 @@ class MainWindow(QMainWindow):
             self.profile.set_physical(index, dlg.result_bind)
             self._mark_dirty()
             self._refresh_all()
+
+    def _edit_cross(self) -> None:
+        """The 4-way thumb rocker is one physical part (and one SVG shape - see
+        'Cross' in tartarus_v2.svg), but four independent binds. Show a small
+        chooser instead of guessing which direction a click meant."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Steuerkreuz belegen")
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel("Welche Richtung?"))
+
+        grid = QGridLayout()
+        # index into KEY_LABELS, label, (grid col, grid row) - arranged like the physical d-pad
+        directions = [
+            (21, "Oben", 1, 0),
+            (24, "Links", 0, 1),
+            (22, "Rechts", 2, 1),
+            (23, "Unten", 1, 2),
+        ]
+        for idx, label, col, row in directions:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda checked=False, i=idx: self._pick_cross_direction(dlg, i))
+            grid.addWidget(btn, row, col)
+        layout.addLayout(grid)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        dlg.exec()
+
+    def _pick_cross_direction(self, chooser: QDialog, index: int) -> None:
+        chooser.accept()
+        self._edit_key(index)
 
     def _edit_wheel_click(self) -> None:
         if self.mouse_profile is None:
