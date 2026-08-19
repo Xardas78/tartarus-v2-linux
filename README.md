@@ -1,5 +1,7 @@
 # Tartarus V2 Linux Configurator
 
+![Razer Tartarus V2](T2.png)
+
 Linux-Treiber + grafische Konfigurationsoberfläche für die Razer Tartarus V2 (KDE Plasma / PySide6).
 
 ## Über dieses Projekt
@@ -9,7 +11,8 @@ Dieses Projekt baut auf dem quelloffenen Kernel-Treiber von
 [Drayux/Tartarus](https://github.com/Drayux/Tartarus) auf und ergänzt ihn um:
 
 - ein sauberes Python-Backend (`tartarus_backend.py`) für die sysfs-Schnittstelle des Treibers
-- eine native Qt/PySide6-GUI (`tartarus_gui.py`) zur Bearbeitung der 8 Geräteprofile
+- eine native Qt/PySide6-GUI (`tartarus_gui.py`) zur Bearbeitung der 8 Geräteprofile,
+  inkl. Live-Anzeige gedrückter Tasten während der Konfiguration
 - eine udev-Regel für Schreibzugriff ohne root
 
 ## Komponenten
@@ -27,12 +30,31 @@ Alle 25 physischen Tasten (1-20, Circle, Steuerkreuz) vollständig getestet und 
 Mausrad (Scrollen + Mittelklick) funktioniert mit Festverhalten, ist aber noch nicht
 profilabhängig konfigurierbar (Treiber-seitige Limitierung, siehe unten).
 
+## Live-Tastenanzeige
+
+Beim Konfigurieren zeigt die GUI gedrückte Tasten in Echtzeit an: Wird eine physische Taste
+gedrückt, leuchtet der zugehörige Button auf und zeigt die aktuell zugewiesene Belegung.
+
+Technisch hört die GUI dazu auf das evdev-Gerät der Tartarus (`/dev/input/eventX`) und
+gleicht die gemeldete (bereits gemappte) Taste mit dem geladenen Profil ab, um die
+physische Taste zurückzuermitteln. Das hat zwei Konsequenzen:
+
+- Benötigt das Python-Paket `evdev` (`pip install evdev`) sowie Lesezugriff auf
+  `/dev/input/eventX` (auf den meisten Distros bereits über die Gruppe `input` bzw.
+  systemd-logind-ACLs gegeben — keine zusätzliche udev-Regel nötig)
+- Tasten mit Bind-Typ **Hypershift**, **Profil wechseln** oder **Nichts** lösen kein
+  reguläres Key-Event aus (der Treiber verarbeitet sie intern) und leuchten daher beim
+  Drücken nicht auf — nur **Taste**- und **Makro-Slot**-Binds sind sichtbar
+- Fehlt `evdev` oder wird kein passendes Eventgerät gefunden, startet die GUI trotzdem
+  normal, nur ohne die Live-Anzeige (Hinweis dazu erscheint in der Statusleiste)
+
 ## Bekannte Einschränkungen
 
 - Mausrad-Profile sind im Treiber nicht implementiert (`profile_show`/`profile_store`
   haben für `MOUSE_INUM` nur ein `// TODO`)
 - Bind-Format unterstützt keine Modifier-Kombinationen (z.B. Strg+1) in einem einzelnen Bind
 - Interface 1 (EXT) hat im Original-Treiber keine aktive Funktion (Stub)
+- Live-Tastenanzeige funktioniert nur für Taste- und Makro-Slot-Binds (siehe oben)
 
 ## Installation
 
@@ -47,7 +69,7 @@ sudo dkms build -m tartarus -v 0.1
 sudo dkms install -m tartarus -v 0.1
 sudo modprobe tartarus
 
-pip install pyside6   # oder: sudo pacman -S pyside6
+pip install pyside6 evdev   # oder: sudo pacman -S pyside6 python-evdev
 python3 tartarus_gui.py
 ```
 

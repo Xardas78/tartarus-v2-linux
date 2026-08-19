@@ -228,6 +228,17 @@ class TartarusDevice:
         only; there is currently no way to set this independently of the profile."""
         return (bool(profile_num & 0x04), bool(profile_num & 0x02), bool(profile_num & 0x01))
 
+    def find_event_device(self) -> Path | None:
+        """Locates the /dev/input/eventX node registered for this KBD interface
+        (input_config() in tartarus.c registers one input_dev per interface).
+        Used for live key-press monitoring in the GUI; returns None if the
+        input subsystem hasn't created the node (or already gone)."""
+        for event_dir in self.path.glob("input/input*/event*"):
+            dev_node = Path("/dev/input") / event_dir.name
+            if dev_node.exists():
+                return dev_node
+        return None
+
     def read_profile(self, profile_num: int | None = None) -> Profile:
         """Reads the keymap of the given profile (switches active profile if needed)."""
         if profile_num is not None and profile_num != self.active_profile:

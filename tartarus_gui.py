@@ -10,9 +10,10 @@ Run: python3 tartarus_gui.py
 
 from __future__ import annotations
 
+import select
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox, QDialog, QDialogButtonBox,
@@ -23,6 +24,58 @@ from tartarus_backend import (
     TartarusDevice, Profile, Bind, BindType,
     KEY_LABELS, KEY_NAME_TO_CODE, KEY_CODE_TO_NAME, MACRO_NAMES,
 )
+
+try:
+    import evdev
+except ImportError:
+    evdev = None
+
+# Offset resolve_event_kbd() in tartarus.c applies to a macro bind's data byte
+# before calling input_report_key() - see CTRL_MACRO case (data + 0x28F lands
+# on KEY_MACRO1 .. KEY_MACRO30, 0x290-0x2AD).
+MACRO_KEYCODE_OFFSET = 0x28F
+
+# Visual style applied to a key button while its mapped evdev keycode is held down.
+KEY_ACTIVE_STYLE = "background-color: #2ecc71; color: black; font-weight: bold;"
+
+
+class KeyMonitorThread(QThread):
+    """Watches the KBD interface's evdev node and emits (keycode, pressed) for
+    every EV_KEY event. This is the MAPPED keycode the driver reports (see
+    resolve_event_kbd() in tartarus.c) - not the physical key index - so the
+    caller has to reverse-map it via the currently loaded profile.
+    NOTE: Keys bound to HYPERSHIFT/PROFILE/NOP never produce an EV_KEY event
+    here (the driver consumes them internally), so they cannot be highlighted
+    this way."""
+
+    key_event = Signal(int, bool)
+
+    def __init__(self, device_path, parent=None):
+        super().__init__(parent)
+        self.device_path = device_path
+        self._stop = False
+
+    def run(self) -> None:
+        try:
+            dev = evdev.InputDevice(str(self.device_path))
+        except OSError:
+            return
+        try:
+            while not self._stop:
+                r, _, _ = select.select([dev.fd], [], [], 0.5)
+                if not r:
+                    continue
+                try:
+                    for event in dev.read():
+                        if event.type == evdev.ecodes.EV_KEY:
+                            self.key_event.emit(event.code, bool(event.value))
+                except OSError:
+                    break  # device unplugged
+        finally:
+            dev.close()
+
+    def stop(self) -> None:
+        self._stop = True
 
 # Version of this GUI/backend tooling (independent of the kernel module's DKMS
 # version, which stays at the stable 0.1 unless the driver itself changes).
@@ -183,9 +236,12 @@ class MainWindow(QMainWindow):
         self.profile = self.device.read_profile(self.profile_num)
         self.dirty = False
         self.key_buttons: list[QPushButton] = []
+        self._code_to_indices: dict[int, list[int]] = {}
+        self._active_indices: set[int] = set()
 
         self._build_ui()
         self._refresh_all()
+        self._start_key_monitor()
 
     # -- UI construction --
     def _build_ui(self) -> None:
@@ -279,7 +335,25 @@ class MainWindow(QMainWindow):
             bind = self.profile.get_physical(i)
             btn.setText(f"{KEY_LABELS[i]}\n{bind.describe()}")
 
+        self._active_indices.clear()
+        self._rebuild_key_event_map()
         self._update_title()
+
+    def _rebuild_key_event_map(self) -> None:
+        """Reverse-maps each physical key's current bind to the evdev keycode
+        the driver will report for it, so a live EV_KEY event can be traced
+        back to the physical button that caused it. Only KEY and MACRO binds
+        produce an observable evdev event (see KeyMonitorThread)."""
+        self._code_to_indices = {}
+        for i in range(len(KEY_LABELS)):
+            bind = self.profile.get_physical(i)
+            if bind.type == BindType.KEY:
+                code = bind.data
+            elif bind.type == BindType.MACRO:
+                code = bind.data + MACRO_KEYCODE_OFFSET
+            else:
+                continue
+            self._code_to_indices.setdefault(code, []).append(i)
 
     def _update_title(self) -> None:
         star = " *" if self.dirty else ""
@@ -288,6 +362,37 @@ class MainWindow(QMainWindow):
     def _mark_dirty(self) -> None:
         self.dirty = True
         self._update_title()
+
+    # -- Live key-press highlighting --
+    def _start_key_monitor(self) -> None:
+        self.key_monitor: KeyMonitorThread | None = None
+
+        if evdev is None:
+            self.statusBar().showMessage(
+                "Live-Tastenanzeige deaktiviert: 'python-evdev' ist nicht installiert "
+                "(pip install evdev).", 6000)
+            return
+
+        event_path = self.device.find_event_device()
+        if event_path is None:
+            self.statusBar().showMessage(
+                "Live-Tastenanzeige deaktiviert: Eventgerät für die Tartarus nicht gefunden.", 6000)
+            return
+
+        self.key_monitor = KeyMonitorThread(event_path, self)
+        self.key_monitor.key_event.connect(self._on_physical_key_event)
+        self.key_monitor.start()
+
+    def _on_physical_key_event(self, code: int, pressed: bool) -> None:
+        for index in self._code_to_indices.get(code, []):
+            self._set_key_highlight(index, pressed)
+
+    def _set_key_highlight(self, index: int, active: bool) -> None:
+        if active:
+            self._active_indices.add(index)
+        else:
+            self._active_indices.discard(index)
+        self.key_buttons[index].setStyleSheet(KEY_ACTIVE_STYLE if active else "")
 
     # -- Actions --
     def _edit_key(self, index: int) -> None:
@@ -404,6 +509,11 @@ class MainWindow(QMainWindow):
             if choice != QMessageBox.Yes:
                 event.ignore()
                 return
+
+        if self.key_monitor is not None:
+            self.key_monitor.stop()
+            self.key_monitor.wait(1000)
+
         event.accept()
 
 
