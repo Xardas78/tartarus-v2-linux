@@ -920,49 +920,64 @@ class MainWindow(QMainWindow):
 
     def _build_dpad_widget(self, dlg: QDialog) -> QWidget | None:
         """Renders dpad_icon.svg (a compass-style D-pad graphic - own artwork,
-        not Razer's) and lays a transparent clickable button over each of its
-        four petals plus its label (DPAD_REGIONS), with a small "currently
-        bound to" readout next to each label (DPAD_INFO_POS). Returns None if
-        the SVG can't be loaded, so _edit_cross() can fall back to plain
-        labeled buttons."""
+        not Razer's) into a QGraphicsScene, with a transparent clickable
+        button over each of its four petals plus its label (DPAD_REGIONS) and
+        a small "currently bound to" readout next to each label
+        (DPAD_INFO_POS). Wrapped in a ScalingGraphicsView (same one the main
+        device view uses) so it scales as the dialog is resized, rather than
+        staying pinned at DPAD_DISPLAY_SIZE. Returns None if the SVG can't be
+        loaded, so _edit_cross() can fall back to plain labeled buttons."""
         renderer = QSvgRenderer(str(DPAD_SVG_PATH))
         if not renderer.isValid():
             return None
 
-        pixmap = QPixmap(DPAD_DISPLAY_SIZE, DPAD_DISPLAY_SIZE)
+        # Rendered at the SVG's own native resolution - the view's own zoom
+        # transform (from fitInView(), see ScalingGraphicsView) does the actual
+        # up/downscaling to fit the dialog, together with SmoothPixmapTransform
+        # below, rather than us re-rendering the pixmap on every resize.
+        pixmap = QPixmap(DPAD_VIEWBOX, DPAD_VIEWBOX)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         renderer.render(painter)
         painter.end()
 
-        container = QWidget()
-        container.setFixedSize(DPAD_DISPLAY_SIZE, DPAD_DISPLAY_SIZE)
-        bg_label = QLabel(container)
-        bg_label.setPixmap(pixmap)
-        bg_label.setGeometry(0, 0, DPAD_DISPLAY_SIZE, DPAD_DISPLAY_SIZE)
+        # Kept alive on the dialog (not just a local) for the same reason as
+        # MainWindow._device_scene: QGraphicsView.setScene() doesn't take
+        # Python-visible ownership, so an otherwise-unreferenced scene gets
+        # garbage-collected out from under the view.
+        dlg._dpad_scene = scene = QGraphicsScene(0, 0, DPAD_VIEWBOX, DPAD_VIEWBOX)
+        scene.addPixmap(pixmap)
 
-        scale = DPAD_DISPLAY_SIZE / DPAD_VIEWBOX
         directions = [(21, "Oben"), (24, "Links"), (22, "Rechts"), (23, "Unten")]
         for idx, label in directions:
             cx, cy, w, h = DPAD_REGIONS[label]
-            btn = QPushButton(container)
-            btn.setGeometry(round((cx - w / 2) * scale), round((cy - h / 2) * scale),
-                             round(w * scale), round(h * scale))
+            btn = QPushButton()
+            btn.setFixedSize(round(w), round(h))
             btn.setToolTip(label)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
                 "QPushButton { background: transparent; border: none; }"
                 "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 8px; }")
             btn.clicked.connect(lambda checked=False, i=idx: self._pick_cross_direction(dlg, i))
+            scene.addWidget(btn).setPos(cx - w / 2, cy - h / 2)
 
-            info = QLabel(self.profile.get_physical(idx).describe(), container)
-            info.setStyleSheet("color: #3498db; font-size: 11px;")
+            info = QLabel(self.profile.get_physical(idx).describe())
+            info.setStyleSheet("color: #3498db; font-size: 32px; background: transparent;")
+            info.setFixedWidth(270)
             info.setAlignment(Qt.AlignCenter)
             info.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks pass through to btn
-            info_w = 90
             ix, iy = DPAD_INFO_POS[label]
-            info.setGeometry(round(ix * scale - info_w / 2), round(iy * scale - 8), info_w, 16)
-        return container
+            scene.addWidget(info).setPos(ix - 135, iy - 24)
+
+        view = ScalingGraphicsView(scene)
+        view.setRenderHint(QPainter.Antialiasing)
+        view.setRenderHint(QPainter.SmoothPixmapTransform)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        view.setFrameShape(QFrame.NoFrame)
+        view.setMinimumSize(160, 160)
+        view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        return view
 
     def _edit_cross(self) -> None:
         """The 4-way thumb rocker is one physical part (and one SVG shape - see
@@ -970,12 +985,13 @@ class MainWindow(QMainWindow):
         chooser instead of guessing which direction a click meant."""
         dlg = QDialog(self)
         dlg.setWindowTitle("Steuerkreuz belegen")
+        dlg.resize(300, 380)
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel("Welche Richtung?"))
 
         dpad = self._build_dpad_widget(dlg)
         if dpad is not None:
-            layout.addWidget(dpad, alignment=Qt.AlignCenter)
+            layout.addWidget(dpad)
         else:
             # Fallback: plain labeled buttons in a cross layout, no graphic.
             grid = QGridLayout()
