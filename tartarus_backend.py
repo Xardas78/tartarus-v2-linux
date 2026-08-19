@@ -5,10 +5,15 @@ Razer Tartarus V2. Wraps the sysfs interface (profile / profile_num / profile_co
 and the raw 512-byte profile format into a clean, GUI-agnostic Python API.
 
 Reference (from tartarus.c / module.h):
-  - A profile is 256 entries x 2 bytes (bind type + data) = 512 bytes.
+  - A profile is 256 entries x 3 bytes (bind type + data + mods) = 768 bytes.
+    (Older driver/profile builds used a 2-byte bind with no modifier support -
+    512-byte raw profiles from that era are still read transparently, see
+    Profile.from_bytes(), but always written back out in the new 3-byte format.)
   - profile_show()/profile_store() always operate on the CURRENTLY ACTIVE profile,
     so reading/writing a different profile requires switching profile_num first
     (this briefly makes that profile active on the device - LEDs will change too).
+  - The mods byte (MOD_CTRL|MOD_SHIFT|MOD_ALT|MOD_META) is only applied by the
+    driver when type == KEY (resolve_event_kbd() CTRL_KEY case in tartarus.c).
   - Bind types SCRIPT, SWKEY, MOUSE_MOVE and MOUSE_WHEEL are accepted/stored by the
     driver but not yet acted upon in resolve_event_kbd() - treat them as reserved.
 """
@@ -17,12 +22,35 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 from pathlib import Path
 
 DRIVER_ROOT = Path("/sys/bus/hid/drivers/hid-tartarus")
-PROFILE_SIZE = 512   # bytes
+BIND_SIZE = 3          # bytes per bind (type + data + mods)
+PROFILE_SIZE = 768     # bytes (KEYMAP_LEN * BIND_SIZE)
+OLD_BIND_SIZE = 2       # pre-modifier bind format (type + data only)
+OLD_PROFILE_SIZE = 512  # legacy raw .rz size, still readable for compatibility
 KEYMAP_LEN = 256      # bind entries per profile
+
+MOUSE_KEYMAP_LEN = 8                              # bind entries per mouse profile (struct mprofile in module.h)
+MOUSE_PROFILE_SIZE = MOUSE_KEYMAP_LEN * BIND_SIZE  # bytes
+MOUSE_CLICK_IDX = 0   # MOUSE_BTN_IDX in module.h - keymap slot used for the wheel-click bind
+
+
+class Mod(IntFlag):
+    NONE = 0x00
+    CTRL = 0x01
+    SHIFT = 0x02
+    ALT = 0x04
+    META = 0x08
+
+
+MOD_LABELS = {
+    Mod.CTRL: "Ctrl",
+    Mod.SHIFT: "Shift",
+    Mod.ALT: "Alt",
+    Mod.META: "Meta",
+}
 
 
 class BindType(IntEnum):
@@ -84,6 +112,11 @@ KEY_NAME_TO_CODE = {
     "END": 107, "DOWN": 108, "PAGEDOWN": 109, "INSERT": 110, "DELETE": 111,
     "MUTE": 113, "VOLUMEDOWN": 114, "VOLUMEUP": 115,
     "LEFTMETA": 125, "RIGHTMETA": 126, "MENU": 127,
+    # F13-F24: not printed on most keyboards, but real Linux keycodes - useful as
+    # otherwise-unused targets for external remappers (e.g. keyd) to rebind into
+    # modifier combinations the device's own bind format can't express directly.
+    "F13": 183, "F14": 184, "F15": 185, "F16": 186, "F17": 187, "F18": 188,
+    "F19": 189, "F20": 190, "F21": 191, "F22": 192, "F23": 193, "F24": 194,
 }
 KEY_CODE_TO_NAME = {v: k for k, v in KEY_NAME_TO_CODE.items()}
 
@@ -113,13 +146,35 @@ def find_keyboard_interface() -> Path:
     raise FileNotFoundError("No KBD interface found. Is the Tartarus V2 plugged in?")
 
 
+def find_mouse_interface() -> Path:
+    """Locate the sysfs directory of the MOUSE interface (inum 2) of the connected device."""
+    if not DRIVER_ROOT.exists():
+        raise FileNotFoundError(
+            "hid-tartarus driver not found under /sys/bus/hid/drivers/. "
+            "Is the kernel module loaded (lsmod | grep tartarus)?"
+        )
+    for entry in DRIVER_ROOT.iterdir():
+        if not entry.is_symlink():
+            continue
+        intf_file = entry / "intf_type"
+        if not intf_file.exists():
+            continue
+        try:
+            if intf_file.read_text().strip() == "MOUSE":
+                return entry
+        except OSError:
+            continue
+    raise FileNotFoundError("No MOUSE interface found. Is the Tartarus V2 plugged in?")
+
+
 @dataclass
 class Bind:
     type: BindType = BindType.NOP
     data: int = 0
+    mods: Mod = Mod.NONE
 
     def to_bytes(self) -> bytes:
-        return bytes([int(self.type) & 0xFF, self.data & 0xFF])
+        return bytes([int(self.type) & 0xFF, self.data & 0xFF, int(self.mods) & 0xFF])
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> "Bind":
@@ -127,13 +182,19 @@ class Bind:
             t = BindType(raw[0])
         except ValueError:
             t = BindType.NOP
-        return cls(type=t, data=raw[1])
+        mods = Mod(raw[2]) if len(raw) > 2 else Mod.NONE
+        return cls(type=t, data=raw[1], mods=mods)
+
+    def mod_prefix(self) -> str:
+        if self.type != BindType.KEY or not self.mods:
+            return ""
+        return "+".join(label for mod, label in MOD_LABELS.items() if self.mods & mod) + "+"
 
     def describe(self) -> str:
         if self.type == BindType.NOP:
             return "\u2014"
         if self.type == BindType.KEY:
-            return KEY_CODE_TO_NAME.get(self.data, f"KC 0x{self.data:02x}")
+            return self.mod_prefix() + KEY_CODE_TO_NAME.get(self.data, f"KC 0x{self.data:02x}")
         if self.type == BindType.MACRO:
             try:
                 return MACRO_NAMES[self.data - 1]
@@ -151,13 +212,23 @@ class Profile:
     def to_bytes(self) -> bytes:
         buf = bytearray(PROFILE_SIZE)
         for i, bind in enumerate(self.keymap):
-            buf[i * 2: i * 2 + 2] = bind.to_bytes()
+            buf[i * BIND_SIZE: i * BIND_SIZE + BIND_SIZE] = bind.to_bytes()
         return bytes(buf)
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> "Profile":
-        raw = raw[:PROFILE_SIZE].ljust(PROFILE_SIZE, b"\x00")
-        keymap = [Bind.from_bytes(raw[i * 2: i * 2 + 2]) for i in range(KEYMAP_LEN)]
+        """Accepts either the current 3-byte-per-bind format (768 bytes) or a
+        legacy 2-byte-per-bind profile (512 bytes, no modifier support) - see
+        BIND_SIZE/OLD_BIND_SIZE. Anything shorter than the legacy size is
+        zero-padded (matches the driver's own zero-fill in profile_store())."""
+        if len(raw) <= OLD_PROFILE_SIZE:
+            raw = raw[:OLD_PROFILE_SIZE].ljust(OLD_PROFILE_SIZE, b"\x00")
+            keymap = [Bind.from_bytes(raw[i * OLD_BIND_SIZE: i * OLD_BIND_SIZE + OLD_BIND_SIZE])
+                      for i in range(KEYMAP_LEN)]
+        else:
+            raw = raw[:PROFILE_SIZE].ljust(PROFILE_SIZE, b"\x00")
+            keymap = [Bind.from_bytes(raw[i * BIND_SIZE: i * BIND_SIZE + BIND_SIZE])
+                      for i in range(KEYMAP_LEN)]
         return cls(keymap=keymap)
 
     def get_physical(self, index: int) -> Bind:
@@ -175,6 +246,7 @@ class Profile:
                     "label": KEY_LABELS[i],
                     "type": self.get_physical(i).type.name,
                     "data": self.get_physical(i).data,
+                    "mods": int(self.get_physical(i).mods),
                 }
                 for i in range(len(PHYSICAL_KEYS))
             ]
@@ -184,9 +256,39 @@ class Profile:
     def from_dict(cls, d: dict) -> "Profile":
         p = cls()
         for entry in d["keys"]:
-            bind = Bind(type=BindType[entry["type"]], data=entry["data"])
+            bind = Bind(type=BindType[entry["type"]], data=entry["data"],
+                        mods=Mod(entry.get("mods", 0)))
             p.set_physical(entry["index"], bind)
         return p
+
+
+@dataclass
+class MouseProfile:
+    """Counterpart to Profile for the MOUSE interface - see struct mprofile in
+    module.h. Only the wheel-click slot (MOUSE_CLICK_IDX) is currently acted upon
+    by the driver (resolve_event_mouse() in tartarus.c); the rest are reserved."""
+    keymap: list = field(default_factory=lambda: [Bind() for _ in range(MOUSE_KEYMAP_LEN)])
+
+    def to_bytes(self) -> bytes:
+        buf = bytearray(MOUSE_PROFILE_SIZE)
+        for i, bind in enumerate(self.keymap):
+            buf[i * BIND_SIZE: i * BIND_SIZE + BIND_SIZE] = bind.to_bytes()
+        return bytes(buf)
+
+    @classmethod
+    def from_bytes(cls, raw: bytes) -> "MouseProfile":
+        raw = raw[:MOUSE_PROFILE_SIZE].ljust(MOUSE_PROFILE_SIZE, b"\x00")
+        keymap = [Bind.from_bytes(raw[i * BIND_SIZE: i * BIND_SIZE + BIND_SIZE])
+                  for i in range(MOUSE_KEYMAP_LEN)]
+        return cls(keymap=keymap)
+
+    @property
+    def click(self) -> Bind:
+        return self.keymap[MOUSE_CLICK_IDX]
+
+    @click.setter
+    def click(self, bind: Bind) -> None:
+        self.keymap[MOUSE_CLICK_IDX] = bind
 
 
 class TartarusDevice:
@@ -264,7 +366,7 @@ class TartarusDevice:
         self.write_profile(profile, profile_num)
 
     def save_profile_raw(self, path: str, profile_num: int | None = None) -> None:
-        """Saves the raw 512-byte format, compatible with linapse's .rz files."""
+        """Saves the raw 768-byte native format (see PROFILE_SIZE)."""
         profile = self.read_profile(profile_num)
         with open(path, "wb") as f:
             f.write(profile.to_bytes())
@@ -273,3 +375,53 @@ class TartarusDevice:
         with open(path, "rb") as f:
             raw = f.read()
         self.write_profile(Profile.from_bytes(raw), profile_num)
+
+
+class TartarusMouseDevice:
+    """Thin counterpart to TartarusDevice for the MOUSE interface (inum 2).
+    Currently only the wheel-click bind is meaningful - see MouseProfile.click /
+    MOUSE_CLICK_IDX and resolve_event_mouse() in tartarus.c."""
+
+    def __init__(self):
+        self.path = find_mouse_interface()
+
+    def _read(self, name: str) -> bytes:
+        with open(self.path / name, "rb") as f:
+            return f.read()
+
+    def _write(self, name: str, data: bytes) -> None:
+        try:
+            with open(self.path / name, "wb") as f:
+                f.write(data)
+        except PermissionError as e:
+            raise PermissionError(
+                f"No write access to {self.path / name}. "
+                "Install 99-tartarus.rules and add yourself to the 'tartarus' group, "
+                "or run with sudo for now."
+            ) from e
+
+    @property
+    def profile_count(self) -> int:
+        return int(self._read("profile_count").decode().strip())
+
+    @property
+    def active_profile(self) -> int:
+        return int(self._read("profile_num").decode().strip())
+
+    @active_profile.setter
+    def active_profile(self, value: int) -> None:
+        if not (1 <= value <= self.profile_count):
+            raise ValueError(f"Profile must be between 1 and {self.profile_count}")
+        self._write("profile_num", str(value).encode())
+
+    def read_profile(self, profile_num: int | None = None) -> MouseProfile:
+        """Reads the keymap of the given profile (switches active profile if needed)."""
+        if profile_num is not None and profile_num != self.active_profile:
+            self.active_profile = profile_num
+        return MouseProfile.from_bytes(self._read("profile"))
+
+    def write_profile(self, profile: MouseProfile, profile_num: int | None = None) -> None:
+        """Writes a keymap to the given profile (switches active profile if needed)."""
+        if profile_num is not None and profile_num != self.active_profile:
+            self.active_profile = profile_num
+        self._write("profile", profile.to_bytes())

@@ -63,6 +63,14 @@
 #define MWHEEL_BTN		0x04		// Bit pattern for the mouse wheel button
 #define MWHEEL_WHEEL	0x08
 
+#define MOUSE_BTN_IDX	0			// Index within struct mprofile.keymap used for the wheel-click bind
+
+// MODIFIERS (struct bind.mods bitmask, applied when type == CTRL_KEY)
+#define MOD_CTRL		0x01
+#define MOD_SHIFT		0x02
+#define MOD_ALT			0x04
+#define MOD_META		0x08
+
 // BINDS
 #define CTRL_NOP		0x00		// No key action
 #define CTRL_KEY     	0x01		// Keyboard button
@@ -81,6 +89,7 @@
 struct bind {
 	u8 type;		// Event type
 	u8 data;		// Respective data (key code or index of macro)
+	u8 mods;		// Modifier keys held alongside a CTRL_KEY bind (MOD_CTRL | MOD_SHIFT | MOD_ALT | MOD_META)
 };
 
 // Single event and its respective state

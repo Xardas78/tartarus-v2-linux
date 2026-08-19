@@ -65,10 +65,11 @@ static int device_probe (struct hid_device* dev, const struct hid_device_id* id)
 		idata = kzalloc(sizeof(struct mousedata), GFP_KERNEL);
 		if ((status = idata ? 0 : -ENOMEM)) goto probe_fail;
 
-		// mdata = idata;
-		
-		// if(device_create_file(&dev->dev, &dev_attr_profile_num)) return -1;
-		// if(device_create_file(&dev->dev, &dev_attr_profile)) return -1;
+		// Create device files
+		if((status = device_create_file(&dev->dev, &dev_attr_profile_count))) goto probe_fail;
+		if((status = device_create_file(&dev->dev, &dev_attr_profile_num))) goto probe_fail;
+		if((status = device_create_file(&dev->dev, &dev_attr_profile))) goto probe_fail;
+
 		break;
 	}
 
@@ -149,6 +150,9 @@ static int input_config (struct hid_device* dev, struct hid_input* input) {
 		set_bit(BTN_MOUSE, input_dev->keybit);
 		set_bit(BTN_MIDDLE, input_dev->keybit);
 
+		// Regular keys, so the wheel-click bind can also target a keyboard key (CTRL_KEY)
+		for (int i = 1; i <= 248; ++i) set_bit(i, input_dev->keybit);
+
 		break;
 	}
 	
@@ -181,7 +185,9 @@ static void device_disconnect (struct hid_device* dev) {
 		break;
 	case MOUSE_INUM:
 		// Mouse
-		// device_remove_file(&dev->dev, &dev_attr_profile);
+		device_remove_file(&dev->dev, &dev_attr_profile_count);
+		device_remove_file(&dev->dev, &dev_attr_profile_num);
+		device_remove_file(&dev->dev, &dev_attr_profile);
 		break;
 	}
 
@@ -315,10 +321,14 @@ static ssize_t profile_num_store (struct device* dev, struct device_attribute* a
 
 	mutex_lock(&data->lock);
 	switch (data->inum) {
-	case KBD_INUM: 
+	case KBD_INUM:
 		// Release all (not already ignored) keys
 		swap_profile_kbd(data, 0, NULL);
 		set_profile(data, profile);
+		break;
+
+	case MOUSE_INUM:
+		data->profile = profile;
 		break;
 	}
 	mutex_unlock(&data->lock);
@@ -332,7 +342,7 @@ static ssize_t profile_show (struct device* dev, struct device_attribute* attr, 
 	size_t len = 0;
 	struct drvdata* data = dev_get_drvdata(dev);
 	struct kbddata* kdata;
-	// struct mousedata* mdata;
+	struct mousedata* mdata;
 	u8 profile;
 
 	mutex_lock(&data->lock);
@@ -342,19 +352,22 @@ static ssize_t profile_show (struct device* dev, struct device_attribute* attr, 
 		// Keyboard
 		profile = data->profile;
 		if (!profile) break;		// Profile 0 reserved for "no profile"
-		
+
 		len = sizeof(struct profile);
 		kdata = data->idata;
-		
+
 		memcpy(buf, kdata->maps + profile - 1, len);
 		break;
 
 	case MOUSE_INUM:
 		// Mouse
-		// TODO
-		// mdata = data->idata;
-		// profile = data->profile;		
-		// len = sizeof(struct mprofile);
+		profile = data->profile;
+		if (!profile) break;		// Profile 0 reserved for "no profile"
+
+		len = sizeof(struct mprofile);
+		mdata = data->idata;
+
+		memcpy(buf, mdata->maps + profile - 1, len);
 		break;
 	}
 
@@ -366,18 +379,18 @@ static ssize_t profile_show (struct device* dev, struct device_attribute* attr, 
 static ssize_t profile_store (struct device* dev, struct device_attribute* attr, const char* buf, size_t len) {
 	struct drvdata* data = dev_get_drvdata(dev);
 	struct kbddata* kdata;
-	// struct mousedata* mdata;
+	struct mousedata* mdata;
 	struct bind* profile_ptr;
 	u8 profile_num;
 	size_t bytes = 0;
-	
+
 	mutex_lock(&data->lock);
 	switch (data->inum) {
 	case EXT_INUM: break;
 	case KBD_INUM:
 		profile_num = data->profile;
 		if (!profile_num) break;		// Profile 0 reserved for "no profile"
-		
+
 		bytes = (len > sizeof(struct profile)) ? sizeof(struct profile) : len;
 		kdata = data->idata;
 
@@ -391,7 +404,17 @@ static ssize_t profile_store (struct device* dev, struct device_attribute* attr,
 		break;
 
 	case MOUSE_INUM:
-		// TODO
+		profile_num = data->profile;
+		if (!profile_num) break;		// Profile 0 reserved for "no profile"
+
+		bytes = (len > sizeof(struct mprofile)) ? sizeof(struct mprofile) : len;
+		mdata = data->idata;
+
+		profile_ptr = mdata->maps[profile_num - 1].keymap;
+
+		memcpy(profile_ptr, buf, bytes);
+		memset((char*) profile_ptr + bytes, 0, sizeof(struct mprofile) - bytes);
+		printk(KERN_INFO "HID Tartarus: Wrote %lu bytes to mouse profile %d\n", bytes, profile_num);
 		break;
 	}
 
@@ -515,6 +538,14 @@ int process_event_kbd (struct event* evlist, u8* keylist, u8* raw_event, int raw
 	return count;
 }
 
+// Press/release the modifier keys encoded in a CTRL_KEY bind's mods bitmask
+static void report_modifiers (struct input_dev* input, u8 mods, int state) {
+	if (mods & MOD_CTRL)  input_report_key(input, KEY_LEFTCTRL, state);
+	if (mods & MOD_SHIFT) input_report_key(input, KEY_LEFTSHIFT, state);
+	if (mods & MOD_ALT)   input_report_key(input, KEY_LEFTALT, state);
+	if (mods & MOD_META)  input_report_key(input, KEY_LEFTMETA, state);
+}
+
 // Resolve keyboard action from a key index
 // Sets driver interface data relevant to the processing of the mapped action
 // NOTE: Does not check for null pointers
@@ -574,7 +605,10 @@ void resolve_event_kbd (struct event* ev, struct drvdata* data) {
 	// Process and report the mapped keybind action accordingly
 	switch (action.type) {
 	case CTRL_KEY:
+		// Press modifiers before the key, release them after (so held mods bracket the keypress)
+		if (ev->state) report_modifiers(data->input, action.mods, 1);
 		input_report_key(data->input, action.data, ev->state);
+		if (!ev->state) report_modifiers(data->input, action.mods, 0);
 		break;
 
 	case CTRL_MACRO:
@@ -696,16 +730,19 @@ void swap_profile_kbd (struct drvdata* data, u8 profile, struct keystate* whitel
 		// TODO: Macro keys are technically just keys as well so they could be added here
 		switch (action_release.type) {
 		case CTRL_KEY:
-			if (action_press.type == CTRL_KEY && action_release.data == action_press.data) break;
+			if (action_press.type == CTRL_KEY && action_release.data == action_press.data
+					&& action_release.mods == action_press.mods) break;
 
 			// Send up of old and down of new (key -> key only)
 			// NOTE: action_press becomes a CTRL_NOP when profile is 0
 			input_report_key(data->input, action_release.data, 0);
+			report_modifiers(data->input, action_release.mods, 0);
 			if (action_press.type == CTRL_KEY)	{
+				report_modifiers(data->input, action_press.mods, 1);
 				input_report_key(data->input, action_press.data, 1);
 				break;
 			}
-			
+
 			fallthrough;
 		default:
 			// Set the ignore bit
@@ -758,14 +795,38 @@ int process_event_mouse (struct event* evlist, u8* raw_event, int raw_event_size
 
 // Report mouse events to the kernel
 void resolve_event_mouse (struct event* event, struct drvdata* data) {
+	struct mousedata* mdata = data->idata;
+	struct bind action;
+	u8 profile;
 	u8 state;
-	
+
 	// printk(KERN_INFO "Mouse event: %d (%d)", event->idx, event->state);		// (DEBUG)
-	
+
 	switch (event->idx) {
 	case MWHEEL_BTN:
-		input_report_key(data->input, BTN_MIDDLE, event->state);
+		profile = data->profile;
+		action = profile ? mdata->maps[profile - 1].keymap[MOUSE_BTN_IDX] : (struct bind) { 0 };
+
+		switch (action.type) {
+		case CTRL_KEY:
+			if (event->state) report_modifiers(data->input, action.mods, 1);
+			input_report_key(data->input, action.data, event->state);
+			if (!event->state) report_modifiers(data->input, action.mods, 0);
+			break;
+
+		case CTRL_PROFILE:
+			if (event->state) set_profile(data, action.data);
+			break;
+
+		case CTRL_NOP:
+		default:
+			// No bind configured (or an as-yet-unsupported type on this interface) -
+			// fall back to the stock middle-click behavior
+			input_report_key(data->input, BTN_MIDDLE, event->state);
+			break;
+		}
 		break;
+
 	case MWHEEL_WHEEL:
 		state = event->state + 1;
 		input_report_rel(data->input, REL_WHEEL, (int) state - 1);

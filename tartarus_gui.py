@@ -16,12 +16,12 @@ import sys
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QComboBox, QSpinBox, QDialog, QDialogButtonBox,
+    QPushButton, QLabel, QComboBox, QSpinBox, QCheckBox, QDialog, QDialogButtonBox,
     QMessageBox, QFileDialog, QStatusBar, QFrame, QStackedWidget,
 )
 
 from tartarus_backend import (
-    TartarusDevice, Profile, Bind, BindType,
+    TartarusDevice, TartarusMouseDevice, Profile, MouseProfile, Bind, BindType, Mod, MOD_LABELS,
     KEY_LABELS, KEY_NAME_TO_CODE, KEY_CODE_TO_NAME, MACRO_NAMES,
 )
 
@@ -94,6 +94,11 @@ BIND_TYPE_LABELS = {
     BindType.MACRO: "Makro-Slot",
 }
 
+# resolve_event_mouse() in tartarus.c only understands NOP/KEY/PROFILE for the
+# wheel-click bind (anything else - or an unconfigured NOP - falls back to the
+# stock BTN_MIDDLE click), so the edit dialog only offers those here.
+MOUSE_CLICK_BIND_TYPES = [BindType.NOP, BindType.KEY, BindType.PROFILE]
+
 
 def parse_key_text(text: str) -> int | None:
     """Resolve a typed key name or raw hex/decimal value to a Linux keycode."""
@@ -113,16 +118,18 @@ class KeyEditDialog(QDialog):
     """Popup to edit a single key's bind. Returns the new Bind via .result_bind
     if the user clicked OK, otherwise .result_bind stays None."""
 
-    def __init__(self, parent, key_label: str, current: Bind, profile_count: int):
+    def __init__(self, parent, key_label: str, current: Bind, profile_count: int,
+                 bind_types: list[BindType] | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"Taste {key_label} belegen")
         self.profile_count = profile_count
+        self.bind_types = bind_types if bind_types is not None else EDITABLE_BIND_TYPES
         self.result_bind: Bind | None = None
 
         layout = QVBoxLayout(self)
 
         self.type_box = QComboBox()
-        for bt in EDITABLE_BIND_TYPES:
+        for bt in self.bind_types:
             self.type_box.addItem(BIND_TYPE_LABELS[bt], bt)
         layout.addWidget(QLabel("Aktion:"))
         layout.addWidget(self.type_box)
@@ -133,11 +140,27 @@ class KeyEditDialog(QDialog):
         # NOP - nothing to configure
         self.stack.addWidget(QLabel("Diese Taste tut nichts."))
 
-        # KEY - editable combobox of key names
+        # KEY - editable combobox of key names + modifier checkboxes
+        key_page = QWidget()
+        key_layout = QVBoxLayout(key_page)
+        key_layout.setContentsMargins(0, 0, 0, 0)
+
         self.key_combo = QComboBox()
         self.key_combo.setEditable(True)
         self.key_combo.addItems(sorted(KEY_NAME_TO_CODE.keys()))
-        self.stack.addWidget(self._wrap("Taste:", self.key_combo))
+        key_layout.addWidget(self._wrap("Taste:", self.key_combo))
+
+        self.mod_checks: dict[Mod, QCheckBox] = {}
+        mod_row = QHBoxLayout()
+        mod_row.addWidget(QLabel("Modifier:"))
+        for mod, label in MOD_LABELS.items():
+            cb = QCheckBox(label)
+            self.mod_checks[mod] = cb
+            mod_row.addWidget(cb)
+        mod_row.addStretch()
+        key_layout.addLayout(mod_row)
+
+        self.stack.addWidget(key_page)
 
         # HYPERSHIFT - target profile
         self.hs_spin = QSpinBox()
@@ -177,13 +200,15 @@ class KeyEditDialog(QDialog):
         return box
 
     def _load(self, bind: Bind) -> None:
-        idx = EDITABLE_BIND_TYPES.index(bind.type) if bind.type in EDITABLE_BIND_TYPES else 0
+        idx = self.bind_types.index(bind.type) if bind.type in self.bind_types else 0
         self.type_box.setCurrentIndex(idx)
-        self.stack.setCurrentIndex(bind.type if bind.type in EDITABLE_BIND_TYPES else 0)
+        self.stack.setCurrentIndex(bind.type if bind.type in self.bind_types else 0)
 
         if bind.type == BindType.KEY:
             name = KEY_CODE_TO_NAME.get(bind.data, "")
             self.key_combo.setCurrentText(name)
+            for mod, cb in self.mod_checks.items():
+                cb.setChecked(bool(bind.mods & mod))
         elif bind.type == BindType.HYPERSHIFT:
             self.hs_spin.setValue(bind.data or 1)
         elif bind.type == BindType.PROFILE:
@@ -207,7 +232,11 @@ class KeyEditDialog(QDialog):
                                      "Tastenname nicht erkannt (z.B. 'A', 'F1', 'SPACE') "
                                      "und auch nicht als Zahl interpretierbar.")
                 return
-            self.result_bind = Bind(BindType.KEY, code)
+            mods = Mod.NONE
+            for mod, cb in self.mod_checks.items():
+                if cb.isChecked():
+                    mods |= mod
+            self.result_bind = Bind(BindType.KEY, code, mods)
 
         elif bt == BindType.HYPERSHIFT:
             self.result_bind = Bind(BindType.HYPERSHIFT, self.hs_spin.value())
@@ -232,8 +261,21 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Gerät nicht gefunden", str(e))
             sys.exit(1)
 
+        # Mouse interface (wheel-click bind) - optional: degrade gracefully if it's
+        # missing rather than blocking the whole GUI over a secondary feature.
+        try:
+            self.mouse_device: TartarusMouseDevice | None = TartarusMouseDevice()
+        except FileNotFoundError:
+            self.mouse_device = None
+
         self.profile_num = self.device.active_profile
         self.profile = self.device.read_profile(self.profile_num)
+        self.mouse_profile: MouseProfile | None = None
+        if self.mouse_device is not None:
+            try:
+                self.mouse_profile = self.mouse_device.read_profile(self.profile_num)
+            except Exception:
+                self.mouse_profile = None
         self.dirty = False
         self.key_buttons: list[QPushButton] = []
         self._code_to_indices: dict[int, list[int]] = {}
@@ -287,16 +329,24 @@ class MainWindow(QMainWindow):
             grid.addWidget(btn, i // 5, i % 5)
         outer.addLayout(grid)
 
-        # Mouse wheel - placeholder only. resolve_event_mouse() in tartarus.c hardcodes
-        # BTN_MIDDLE/REL_WHEEL with no profile lookup at all (unlike the keyboard side),
-        # so there is currently nothing in the driver to read or write here. Shown
-        # disabled as a reminder of planned functionality, not a working control.
+        # Mouse wheel row. Scroll direction is still hardcoded in the driver
+        # (resolve_event_mouse() in tartarus.c) - only the wheel-click bind is
+        # configurable so far, via MouseProfile.click / MOUSE_CLICK_IDX.
         wheel_row = QHBoxLayout()
-        for wheel_label in ("Mausrad hoch", "Mausrad runter", "Mausrad-Klick"):
+        for wheel_label in ("Mausrad hoch", "Mausrad runter"):
             wheel_btn = QPushButton(f"{wheel_label}\n(im Treiber noch nicht unterstützt)")
             wheel_btn.setMinimumSize(140, 70)
             wheel_btn.setEnabled(False)
             wheel_row.addWidget(wheel_btn)
+
+        self.wheel_click_btn = QPushButton("Mausrad-Klick")
+        self.wheel_click_btn.setMinimumSize(140, 70)
+        self.wheel_click_btn.clicked.connect(self._edit_wheel_click)
+        self.wheel_click_btn.setEnabled(self.mouse_profile is not None)
+        if self.mouse_profile is None:
+            self.wheel_click_btn.setText("Mausrad-Klick\n(Maus-Interface nicht gefunden)")
+        wheel_row.addWidget(self.wheel_click_btn)
+
         outer.addLayout(wheel_row)
 
         self.setCentralWidget(central)
@@ -315,7 +365,7 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
-        save_raw = menu.addAction("Profil speichern (.rz, kompatibel zu linapse)…")
+        save_raw = menu.addAction("Profil speichern (.rz, natives 3-Byte-Format)…")
         save_raw.triggered.connect(self._save_raw)
 
         load_raw = menu.addAction("Profil laden (.rz)…")
@@ -334,6 +384,11 @@ class MainWindow(QMainWindow):
         for i, btn in enumerate(self.key_buttons):
             bind = self.profile.get_physical(i)
             btn.setText(f"{KEY_LABELS[i]}\n{bind.describe()}")
+
+        if self.mouse_profile is not None:
+            click = self.mouse_profile.click
+            desc = click.describe() if click.type != BindType.NOP else "Mittelklick (Standard)"
+            self.wheel_click_btn.setText(f"Mausrad-Klick\n{desc}")
 
         self._active_indices.clear()
         self._rebuild_key_event_map()
@@ -403,6 +458,17 @@ class MainWindow(QMainWindow):
             self._mark_dirty()
             self._refresh_all()
 
+    def _edit_wheel_click(self) -> None:
+        if self.mouse_profile is None:
+            return
+        current = self.mouse_profile.click
+        dlg = KeyEditDialog(self, "Mausrad-Klick", current, self.device.profile_count,
+                             bind_types=MOUSE_CLICK_BIND_TYPES)
+        if dlg.exec() == QDialog.Accepted and dlg.result_bind is not None:
+            self.mouse_profile.click = dlg.result_bind
+            self._mark_dirty()
+            self._refresh_all()
+
     def _confirm_discard_if_dirty(self) -> bool:
         if not self.dirty:
             return True
@@ -424,6 +490,8 @@ class MainWindow(QMainWindow):
 
         try:
             self.profile = self.device.read_profile(new_num)
+            if self.mouse_device is not None:
+                self.mouse_profile = self.mouse_device.read_profile(new_num)
         except Exception as e:
             QMessageBox.critical(self, "Lesefehler", str(e))
             return
@@ -435,6 +503,8 @@ class MainWindow(QMainWindow):
     def _write_to_device(self) -> None:
         try:
             self.device.write_profile(self.profile, self.profile_num)
+            if self.mouse_device is not None and self.mouse_profile is not None:
+                self.mouse_device.write_profile(self.mouse_profile, self.profile_num)
         except PermissionError as e:
             QMessageBox.critical(self, "Keine Schreibrechte", str(e))
             return
@@ -449,6 +519,8 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard_if_dirty():
             return
         self.profile = self.device.read_profile(self.profile_num)
+        if self.mouse_device is not None:
+            self.mouse_profile = self.mouse_device.read_profile(self.profile_num)
         self.dirty = False
         self._refresh_all()
         self.statusBar().showMessage("Profil neu vom Gerät geladen.", 4000)
