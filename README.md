@@ -118,9 +118,11 @@ pip install pyside6 evdev   # oder: sudo pacman -S pyside6 python-evdev
 python3 tartarus_gui.py
 ```
 
-> Falls der Build fehlschlägt, weil dein Kernel mit clang statt gcc gebaut wurde
-> (`uname -a` zeigt dann meist etwas mit `clang` statt `gcc`), `dkms.conf` baut
-> standardmäßig bereits mit `LLVM=1` — das ist bei aktuellem CachyOS/Arch-Kernel nötig.
+> Manche Kernel-Varianten sind mit clang statt gcc gebaut (z.B. bei CachyOS: `-cachyos`
+> mit Clang, `-cachyos-bore` mit GCC — beides gleichzeitig installierbar). `dkms.conf`
+> prüft das automatisch anhand von `CONFIG_CC_IS_CLANG` in der Kernel-`.config` und hängt
+> `LLVM=1` nur an, wenn der jeweilige Kernel das auch tatsächlich braucht — funktioniert
+> also unverändert, egal welche Kernel-Variante gerade installiert/aktiv ist.
 
 ### Update von v0.1
 
