@@ -35,7 +35,7 @@ except ImportError:
           file=sys.stderr)
     sys.exit(1)
 
-from tartarus_backend import TartarusDevice
+from tartarus_backend import TartarusDevice, restore_all_profiles
 from tartarus_macros import MacroStep, MACRO_SLOTS, load_macros
 
 # KEY_MACRO1..KEY_MACRO30 = 0x290..0x2AD - see MACRO_KEYCODE_OFFSET in
@@ -84,6 +84,13 @@ def find_tartarus_event_device() -> str | None:
 
 
 def run() -> None:
+    # Restore saved profiles so settings survive reconnect / system wakeup.
+    try:
+        restore_all_profiles()
+        print("tartarus-macros: profiles restored from disk.")
+    except Exception as e:
+        print(f"tartarus-macros: profile restore skipped: {e}", file=sys.stderr)
+
     event_path = find_tartarus_event_device()
     if event_path is None:
         print("tartarus-macros: Tartarus KBD event device not found - "
@@ -122,8 +129,8 @@ def run() -> None:
             try:
                 events = list(dev.read())
             except OSError:
-                print("tartarus-macros: device disconnected, exiting.", file=sys.stderr)
-                break
+                print("tartarus-macros: device disconnected, restarting.", file=sys.stderr)
+                sys.exit(1)
             for event in events:
                 if event.type != ecodes.EV_KEY or event.value != 1:
                     continue

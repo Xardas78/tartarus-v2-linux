@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from tartarus_backend import (
     TartarusDevice, TartarusMouseDevice, Profile, MouseProfile, Bind, BindType, Mod, MOD_LABELS,
     KEY_LABELS, KEY_NAME_TO_CODE, KEY_CODE_TO_NAME, MACRO_NAMES,
+    save_profile_snapshot,
 )
 from tartarus_layout import SVG_PATH, SVG_VIEWBOX, load_hitboxes
 from tartarus_svg import Matrix, SvgDocument, compose
@@ -1070,6 +1071,14 @@ class MainWindow(QMainWindow):
             return
         self.dirty = False
         self._update_title()
+        try:
+            save_profile_snapshot(
+                self.profile_num, self.profile,
+                self.mouse_profile if self.mouse_device is not None else None,
+                active_profile=self.profile_num,
+            )
+        except Exception:
+            pass
         self.statusBar().showMessage(f"Profil {self.profile_num} auf das Gerät geschrieben.", 4000)
 
     def _reload_from_device(self) -> None:

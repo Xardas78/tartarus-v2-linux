@@ -377,6 +377,82 @@ class TartarusDevice:
         self.write_profile(Profile.from_bytes(raw), profile_num)
 
 
+SAVED_PROFILES_PATH = Path.home() / ".config" / "tartarus" / "saved_profiles.json"
+
+
+def save_profile_snapshot(
+    profile_num: int,
+    profile: Profile,
+    mouse_profile: "MouseProfile | None" = None,
+    *,
+    active_profile: int | None = None,
+) -> None:
+    """Persist one profile slot to SAVED_PROFILES_PATH so restore_all_profiles()
+    can reapply it after a device reconnect or system wakeup. Merges into the
+    existing file so other slots are preserved."""
+    SAVED_PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data: dict = json.loads(SAVED_PROFILES_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data.setdefault("kbd", {})[str(profile_num)] = profile.to_dict()
+    if mouse_profile is not None:
+        click = mouse_profile.click
+        data.setdefault("mouse_click", {})[str(profile_num)] = {
+            "type": click.type.name,
+            "data": click.data,
+            "mods": int(click.mods),
+        }
+    if active_profile is not None:
+        data["active_profile"] = active_profile
+    SAVED_PROFILES_PATH.write_text(json.dumps(data, indent=2))
+
+
+def restore_all_profiles() -> None:
+    """Re-apply every profile slot recorded by save_profile_snapshot() to the
+    device via sysfs. Called by the macro daemon on startup/reconnect so that
+    settings survive a device disconnect, USB reset, or system wakeup."""
+    if not SAVED_PROFILES_PATH.exists():
+        return
+    try:
+        data: dict = json.loads(SAVED_PROFILES_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+
+    try:
+        kbd_dev = TartarusDevice()
+        for slot_str, pdict in data.get("kbd", {}).items():
+            try:
+                kbd_dev.write_profile(Profile.from_dict(pdict), int(slot_str))
+            except Exception:
+                pass
+        active = data.get("active_profile")
+        if active is not None:
+            try:
+                kbd_dev.active_profile = int(active)
+            except Exception:
+                pass
+    except FileNotFoundError:
+        pass
+
+    try:
+        mouse_dev = TartarusMouseDevice()
+        for slot_str, click_d in data.get("mouse_click", {}).items():
+            try:
+                bind = Bind(
+                    type=BindType[click_d["type"]],
+                    data=click_d["data"],
+                    mods=Mod(click_d.get("mods", 0)),
+                )
+                mp = MouseProfile()
+                mp.click = bind
+                mouse_dev.write_profile(mp, int(slot_str))
+            except Exception:
+                pass
+    except FileNotFoundError:
+        pass
+
+
 class TartarusMouseDevice:
     """Thin counterpart to TartarusDevice for the MOUSE interface (inum 2).
     Currently only the wheel-click bind is meaningful - see MouseProfile.click /
