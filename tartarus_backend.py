@@ -79,8 +79,13 @@ PHYSICAL_KEYS = [
     0x2B, 0x14, 0x1A, 0x08, 0x15,   # row 2
     0x39, 0x04, 0x16, 0x07, 0x09,   # row 3
     0x42, 0x1D, 0x1B, 0x06, 0x2C,   # row 4 (0x42 = Shift, modkey-masked)
-    0x44, 0x50, 0x52, 0x4F, 0x51,   # circle + thumbstick (0x44 = Alt, modkey-masked)
+    0x44, 0x51, 0x4F, 0x52, 0x50,   # circle + thumbstick U/R/D/L (0x44 = Alt, modkey-masked)
 ]
+
+# Thumbstick order before the direction labels were corrected (U/R/D/L were
+# 0x50/0x52/0x4F/0x51). Saved profiles/JSON exports written by older versions
+# have no per-key "code", so their indices are resolved through this list.
+LEGACY_PHYSICAL_KEYS = PHYSICAL_KEYS[:21] + [0x50, 0x52, 0x4F, 0x51]
 
 KEY_LABELS = [
     "01", "02", "03", "04", "05",
@@ -243,6 +248,7 @@ class Profile:
             "keys": [
                 {
                     "index": i,
+                    "code": PHYSICAL_KEYS[i],
                     "label": KEY_LABELS[i],
                     "type": self.get_physical(i).type.name,
                     "data": self.get_physical(i).data,
@@ -258,7 +264,10 @@ class Profile:
         for entry in d["keys"]:
             bind = Bind(type=BindType[entry["type"]], data=entry["data"],
                         mods=Mod(entry.get("mods", 0)))
-            p.set_physical(entry["index"], bind)
+            code = entry.get("code")
+            if code is None:
+                code = LEGACY_PHYSICAL_KEYS[entry["index"]]
+            p.keymap[code] = bind
         return p
 
 
