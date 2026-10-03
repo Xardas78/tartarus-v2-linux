@@ -124,6 +124,20 @@ python3 tartarus_gui.py
 > `LLVM=1` nur an, wenn der jeweilige Kernel das auch tatsächlich braucht — funktioniert
 > also unverändert, egal welche Kernel-Variante gerade installiert/aktiv ist.
 
+### Startmenü-Eintrag (KDE / GNOME)
+
+```bash
+# Icon installieren
+install -Dm644 T2.svg ~/.local/share/icons/hicolor/scalable/apps/tartarus-v2.svg
+
+# Desktop-Eintrag installieren
+install -Dm644 tartarus-configurator.desktop ~/.local/share/applications/tartarus-configurator.desktop
+```
+
+Danach erscheint „Tartarus V2 Konfigurator" im KDE-Startmenü (Kickoff) und im
+GNOME-Aktivitätensuchfeld. Die `.desktop`-Datei verwendet `$HOME` intern, der Pfad
+muss also nicht angepasst werden, solange das Repo unter `~/tartarus-v2-linux/` liegt.
+
 ### Update von v0.1
 
 Das Profil-Binärformat hat sich geändert (2 → 3 Byte pro Taste, für Modifier-Support).

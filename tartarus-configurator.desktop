@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Tartarus V2 Konfigurator
+GenericName=Keypad-Konfiguration
+Comment=Tasten und Makros für das Razer Tartarus V2 konfigurieren
+Exec=sh -c 'python3 "$HOME/tartarus-v2-linux/tartarus_gui.py"'
+Icon=tartarus-v2
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=Razer;Tartarus;Keypad;Tastatur;Makro;
+StartupNotify=true
