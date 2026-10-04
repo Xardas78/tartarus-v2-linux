@@ -39,7 +39,7 @@ Dieses Projekt baut auf dem quelloffenen Kernel-Treiber von
 Alle 25 physischen Tasten (1-20, Circle, Steuerkreuz) sowie der Mausrad-Klick sind vollständig
 getestet und konfigurierbar, inklusive Modifier-Tasten (Strg/Shift/Alt/Meta) pro Bind. Das
 Steuerkreuz (Cross) ist am Gerät eine einzelne 4-Wege-Wippe mit vier unabhängigen Binds
-(Oben/Rechts/Unten/Links) — ein Klick in der GUI öffnet dafür eine kleine Richtungsauswahl.
+(Oben/Rechts/Unten/Links) — in der GUI sitzt dafür ein eigenes Steuerkreuz-Feld rechts neben dem Gerät.
 Mausrad-Scrollen (hoch/runter) hat weiterhin Festverhalten und ist noch nicht konfigurierbar.
 
 ## Live-Tastenanzeige

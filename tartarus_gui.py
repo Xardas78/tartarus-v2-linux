@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QThread, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap, QTransform
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPalette, QPen, QPixmap, QTransform
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
@@ -60,8 +60,8 @@ DEVICE_VIEW_WIDTH = 420   # device image display size; sidebars sit either side 
 DEVICE_BG_SVG_PATH = SVG_PATH.parent / "device_bg.svg"
 
 # Compass-style D-pad graphic (own artwork, hand-built to a similar layout as
-# Razer Synapse's own D-PAD dialog - not a copy of it) shown in _edit_cross()'s
-# direction chooser - see _build_dpad_widget(). Positions are read off
+# Razer Synapse's own D-PAD dialog - not a copy of it) shown in the main window's
+# side panel - see _build_dpad_widget(). Positions are read off
 # dpad_icon.svg's own text/path coordinates directly (it has no element ids to
 # look up via SvgDocument), in the SVG's 0-600 viewBox units:
 #  - DPAD_REGIONS: clickable rect (cx, cy, w, h) per direction, covering both
@@ -532,7 +532,10 @@ class MainWindow(QMainWindow):
         # is one QGraphicsScene so it scales together as the window is resized.
         device_view = self._build_device_view()
         device_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        outer.addWidget(device_view)
+        body = QHBoxLayout()
+        body.addWidget(device_view, stretch=3)
+        body.addWidget(self._build_dpad_panel(), stretch=1)
+        outer.addLayout(body, stretch=1)
 
         note = QLabel("Mausrad hoch/runter: im Treiber noch nicht konfigurierbar.")
         note.setStyleSheet("color: gray;")
@@ -620,7 +623,7 @@ class MainWindow(QMainWindow):
         # its own sidebar row (like Razer's own Synapse D-PAD list) sharing that
         # one marker on the image; clicking the marker itself (ambiguous - one
         # shape, four possible targets) opens a small chooser instead - see
-        # add_region()/_edit_cross() below.
+        # add_region() below.
         key_regions = [(f"Key_{i + 1}", (i,), f"{i + 1:02d}") for i in range(20)]
         key_regions.append(("Circle", (20,), "Circle"))
         key_regions.append(("Cross", (21,), "Oben"))
@@ -707,12 +710,12 @@ class MainWindow(QMainWindow):
                 # A row always edits its own single key directly. The marker on
                 # the image is only wired once per element - for Cross that's a
                 # click on the shared shape, ambiguous between 4 directions, so
-                # it opens the chooser instead of guessing.
+                # it only shows a hint (the directions live in the side panel).
                 row.clicked.connect(lambda checked=False, i=idx: self._edit_key(i))
                 if element_id not in connected_markers:
                     connected_markers.add(element_id)
                     if element_id == "Cross":
-                        marker.clicked.connect(self._edit_cross)
+                        marker.clicked.connect(self._cross_marker_clicked)
                     else:
                         marker.clicked.connect(lambda checked=False, i=idx: self._edit_key(i))
 
@@ -806,6 +809,7 @@ class MainWindow(QMainWindow):
         r, g, b = self.device.led_state_for_profile(self.profile_num)
         color = "#%02x%02x%02x" % (255 if r else 0, 255 if g else 0, 255 if b else 0)
         self.led_preview.setStyleSheet(f"background-color: {color}; border: 1px solid #888;")
+        self._refresh_dpad_panel()
 
         self._btn_base_state = []
         # Several indices can share one marker (Cross: 4 directions, one shape -
@@ -941,7 +945,7 @@ class MainWindow(QMainWindow):
             self._mark_dirty()
             self._refresh_all()
 
-    def _build_dpad_widget(self, dlg: QDialog) -> QWidget | None:
+    def _build_dpad_widget(self) -> QWidget | None:
         """Renders dpad_icon.svg (a compass-style D-pad graphic - own artwork,
         not Razer's) into a QGraphicsScene, with a transparent clickable
         button over each of its four petals plus its label (DPAD_REGIONS) and
@@ -949,7 +953,7 @@ class MainWindow(QMainWindow):
         (DPAD_INFO_POS). Wrapped in a ScalingGraphicsView (same one the main
         device view uses) so it scales as the dialog is resized, rather than
         staying pinned at DPAD_DISPLAY_SIZE. Returns None if the SVG can't be
-        loaded, so _edit_cross() can fall back to plain labeled buttons."""
+        loaded, so _build_dpad_panel() can fall back to plain labeled buttons."""
         renderer = QSvgRenderer(str(DPAD_SVG_PATH))
         if not renderer.isValid():
             return None
@@ -968,7 +972,7 @@ class MainWindow(QMainWindow):
         # MainWindow._device_scene: QGraphicsView.setScene() doesn't take
         # Python-visible ownership, so an otherwise-unreferenced scene gets
         # garbage-collected out from under the view.
-        dlg._dpad_scene = scene = QGraphicsScene(0, 0, DPAD_VIEWBOX, DPAD_VIEWBOX)
+        self._dpad_scene = scene = QGraphicsScene(0, 0, DPAD_VIEWBOX, DPAD_VIEWBOX)
         scene.addPixmap(pixmap)
 
         directions = [(21, "Oben"), (24, "Links"), (22, "Rechts"), (23, "Unten")]
@@ -981,7 +985,7 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet(
                 "QPushButton { background: transparent; border: none; }"
                 "QPushButton:hover { background: rgba(255,255,255,30); border-radius: 8px; }")
-            btn.clicked.connect(lambda checked=False, i=idx: self._pick_cross_direction(dlg, i))
+            btn.clicked.connect(lambda checked=False, i=idx: self._edit_key(i))
             scene.addWidget(btn).setPos(cx - w / 2, cy - h / 2)
 
             info = QLabel(self.profile.get_physical(idx).describe())
@@ -989,6 +993,7 @@ class MainWindow(QMainWindow):
             info.setFixedWidth(270)
             info.setAlignment(Qt.AlignCenter)
             info.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks pass through to btn
+            self._dpad_labels[idx] = (info, "")
             ix, iy = DPAD_INFO_POS[label]
             scene.addWidget(info).setPos(ix - 135, iy - 24)
 
@@ -1002,19 +1007,21 @@ class MainWindow(QMainWindow):
         view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         return view
 
-    def _edit_cross(self) -> None:
-        """The 4-way thumb rocker is one physical part (and one SVG shape - see
-        'Cross' in tartarus_v2.svg), but four independent binds. Show a small
-        chooser instead of guessing which direction a click meant."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Steuerkreuz belegen")
-        dlg.resize(300, 380)
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel("Welche Richtung?"))
+    def _build_dpad_panel(self) -> QWidget:
+        """Steuerkreuz editor shown permanently to the right of the device view
+        (instead of a popup): clicking a direction edits that direction's bind."""
+        panel = QFrame()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("Steuerkreuz")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title)
 
-        dpad = self._build_dpad_widget(dlg)
+        self._dpad_labels: dict[int, tuple[QWidget, str]] = {}
+        dpad = self._build_dpad_widget()
         if dpad is not None:
-            layout.addWidget(dpad)
+            layout.addWidget(dpad, stretch=1)
         else:
             # Fallback: plain labeled buttons in a cross layout, no graphic.
             grid = QGridLayout()
@@ -1024,19 +1031,24 @@ class MainWindow(QMainWindow):
             ]
             for idx, label, col, row in directions:
                 btn = QPushButton(label)
-                btn.clicked.connect(lambda checked=False, i=idx: self._pick_cross_direction(dlg, i))
+                btn.clicked.connect(lambda checked=False, i=idx: self._edit_key(i))
+                self._dpad_labels[idx] = (btn, f"{label}\n")
                 grid.addWidget(btn, row, col)
             layout.addLayout(grid)
+            layout.addStretch(1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        buttons.rejected.connect(dlg.reject)
-        layout.addWidget(buttons)
+        panel.setMinimumWidth(240)
+        panel.setMaximumWidth(420)
+        panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        return panel
 
-        dlg.exec()
+    def _refresh_dpad_panel(self) -> None:
+        for idx, (widget, prefix) in self._dpad_labels.items():
+            widget.setText(prefix + self.profile.get_physical(idx).describe())
 
-    def _pick_cross_direction(self, chooser: QDialog, index: int) -> None:
-        chooser.accept()
-        self._edit_key(index)
+    def _cross_marker_clicked(self) -> None:
+        self.statusBar().showMessage(
+            "Steuerkreuz: Richtung rechts im Steuerkreuz-Feld oder in der Liste anklicken.", 4000)
 
     def _edit_wheel_click(self) -> None:
         if self.mouse_profile is None:
@@ -1231,10 +1243,30 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def apply_dark_theme(app: QApplication) -> None:
+    app.setStyle("Fusion")
+    pal = QPalette()
+    window, base, alt = QColor(45, 45, 45), QColor(32, 32, 32), QColor(55, 55, 55)
+    text, disabled = QColor(220, 220, 220), QColor(120, 120, 120)
+    for role, color in [
+        (QPalette.Window, window), (QPalette.WindowText, text), (QPalette.Base, base),
+        (QPalette.AlternateBase, alt), (QPalette.ToolTipBase, alt), (QPalette.ToolTipText, text),
+        (QPalette.Text, text), (QPalette.Button, QColor(60, 60, 60)), (QPalette.ButtonText, text),
+        (QPalette.BrightText, QColor(255, 80, 80)), (QPalette.Link, QColor(52, 152, 219)),
+        (QPalette.Highlight, QColor(52, 152, 219)), (QPalette.HighlightedText, QColor(255, 255, 255)),
+        (QPalette.PlaceholderText, disabled),
+    ]:
+        pal.setColor(role, color)
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        pal.setColor(QPalette.Disabled, role, disabled)
+    app.setPalette(pal)
+
+
 def main() -> None:
     app = QApplication(sys.argv)
+    apply_dark_theme(app)
     window = MainWindow()
-    window.resize(900, 600)
+    window.resize(1250, 720)
     window.show()
     sys.exit(app.exec())
 
