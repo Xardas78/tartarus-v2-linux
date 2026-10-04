@@ -26,6 +26,8 @@ import select
 import signal
 import sys
 import time
+from collections import deque
+from datetime import datetime
 
 try:
     import evdev
@@ -35,7 +37,7 @@ except ImportError:
           file=sys.stderr)
     sys.exit(1)
 
-from tartarus_backend import TartarusDevice, restore_all_profiles
+from tartarus_backend import KEY_CODE_TO_NAME, TartarusDevice, restore_all_profiles
 from tartarus_macros import MacroStep, MACRO_SLOTS, load_macros
 
 # KEY_MACRO1..KEY_MACRO30 = 0x290..0x2AD - see MACRO_KEYCODE_OFFSET in
@@ -121,9 +123,28 @@ def run() -> None:
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
+    # Log every active-profile change with the last key events, so an
+    # unexpected switch can be traced to (or ruled out as) a key press.
+    kbd = TartarusDevice()
+    recent: deque = deque(maxlen=8)
+    last_profile = None
+    try:
+        last_profile = kbd.active_profile
+    except (OSError, ValueError):
+        pass
+
     try:
         while running:
-            ready, _, _ = select.select([dev.fd], [], [], 0.5)
+            ready, _, _ = select.select([dev.fd], [], [], 0.2)
+            try:
+                current = kbd.active_profile
+            except (OSError, ValueError):
+                current = last_profile
+            if current != last_profile:
+                keys = ", ".join(f"{KEY_CODE_TO_NAME.get(c, c)}{'+' if v else '-'}@{t:%H:%M:%S.%f}"[:-3]
+                                 for c, v, t in recent) or "keine"
+                print(f"tartarus-macros: profile {last_profile} -> {current}; last key events: {keys}")
+                last_profile = current
             if not ready:
                 continue
             try:
@@ -132,6 +153,8 @@ def run() -> None:
                 print("tartarus-macros: device disconnected, restarting.", file=sys.stderr)
                 sys.exit(1)
             for event in events:
+                if event.type == ecodes.EV_KEY and event.value in (0, 1):
+                    recent.append((event.code, event.value, datetime.fromtimestamp(event.timestamp())))
                 if event.type != ecodes.EV_KEY or event.value != 1:
                     continue
                 slot = macro_slot_for_code(event.code)
