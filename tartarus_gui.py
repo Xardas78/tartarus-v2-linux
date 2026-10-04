@@ -23,13 +23,14 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QGridLayout, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QComboBox, QSpinBox, QCheckBox, QDialog, QDialogButtonBox,
     QMessageBox, QFileDialog, QStatusBar, QFrame, QStackedWidget, QSizePolicy,
-    QGraphicsView, QGraphicsScene, QGraphicsObject, QStyleOptionGraphicsItem,
+    QGraphicsView, QGraphicsScene, QGraphicsObject, QStyleOptionGraphicsItem, QInputDialog,
 )
 
 from tartarus_backend import (
     TartarusDevice, TartarusMouseDevice, Profile, MouseProfile, Bind, BindType, Mod, MOD_LABELS,
     KEY_LABELS, KEY_NAME_TO_CODE, KEY_CODE_TO_NAME, MACRO_NAMES,
-    save_profile_snapshot,
+    save_profile_snapshot, load_profile_names, set_profile_name, list_library,
+    load_profile_file, save_to_library, LIBRARY_DIR,
 )
 from tartarus_layout import SVG_PATH, SVG_VIEWBOX, load_hitboxes
 from tartarus_svg import Matrix, SvgDocument, compose
@@ -503,6 +504,10 @@ class MainWindow(QMainWindow):
         self.profile_box.currentIndexChanged.connect(self._on_profile_selected)
         top.addWidget(self.profile_box)
 
+        rename_btn = QPushButton("Umbenennen…")
+        rename_btn.clicked.connect(self._rename_profile)
+        top.addWidget(rename_btn)
+
         self.led_preview = QFrame()
         self.led_preview.setFixedSize(24, 24)
         self.led_preview.setFrameShape(QFrame.Box)
@@ -775,9 +780,26 @@ class MainWindow(QMainWindow):
         load_raw = menu.addAction("Profil laden (.rz)…")
         load_raw.triggered.connect(self._load_raw)
 
+        menu.addSeparator()
+
+        rename = menu.addAction("Profil umbenennen…")
+        rename.triggered.connect(self._rename_profile)
+
+        to_library = menu.addAction("Aktuelles Profil in Bibliothek speichern…")
+        to_library.triggered.connect(self._save_to_library)
+
+        self.library_menu = menu.addMenu("Gespeichertes Profil diesem Profil zuweisen")
+        self.library_menu.aboutToShow.connect(self._fill_library_menu)
+
     # -- Data <-> UI sync --
+    def _profile_label(self, n: int) -> str:
+        name = load_profile_names().get(n)
+        return f"Profil {n} \u2014 {name}" if name else f"Profil {n}"
+
     def _refresh_all(self) -> None:
         self.profile_box.blockSignals(True)
+        for n in range(1, self.profile_box.count() + 1):
+            self.profile_box.setItemText(n - 1, self._profile_label(n))
         self.profile_box.setCurrentIndex(self.profile_num - 1)
         self.profile_box.blockSignals(False)
 
@@ -857,7 +879,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         star = " *" if self.dirty else ""
-        self.setWindowTitle(f"Tartarus V2 Configurator {VERSION} \u2014 Profil {self.profile_num}{star}")
+        self.setWindowTitle(f"Tartarus V2 Configurator {VERSION} \u2014 {self._profile_label(self.profile_num)}{star}")
 
     def _mark_dirty(self) -> None:
         self.dirty = True
@@ -1090,6 +1112,60 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self._refresh_all()
         self.statusBar().showMessage("Profil neu vom Gerät geladen.", 4000)
+
+    def _rename_profile(self) -> None:
+        current = load_profile_names().get(self.profile_num, "")
+        name, ok = QInputDialog.getText(
+            self, "Profil umbenennen", f"Name für Profil {self.profile_num}:", text=current)
+        if not ok:
+            return
+        set_profile_name(self.profile_num, name)
+        self._refresh_all()
+        self._update_title()
+
+    def _save_to_library(self) -> None:
+        default = load_profile_names().get(self.profile_num, f"Profil {self.profile_num}")
+        name, ok = QInputDialog.getText(
+            self, "In Bibliothek speichern", "Name des gespeicherten Profils:", text=default)
+        if not ok or not name.strip():
+            return
+        path = save_to_library(name, self.profile)
+        self.statusBar().showMessage(f"In Bibliothek gespeichert: {path.name}", 4000)
+
+    def _fill_library_menu(self) -> None:
+        self.library_menu.clear()
+        entries = list_library()
+        if not entries:
+            empty = self.library_menu.addAction(f"(leer – .json/.rz-Dateien in {LIBRARY_DIR} ablegen)")
+            empty.setEnabled(False)
+        for path in entries:
+            action = self.library_menu.addAction(path.stem)
+            action.triggered.connect(lambda _checked=False, p=path: self._assign_library_profile(p))
+        self.library_menu.addSeparator()
+        other = self.library_menu.addAction("Andere Datei wählen…")
+        other.triggered.connect(self._assign_from_file)
+
+    def _assign_from_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Gespeichertes Profil zuweisen", str(LIBRARY_DIR if LIBRARY_DIR.is_dir() else Path.home()),
+            "Profile (*.json *.rz)")
+        if path:
+            self._assign_library_profile(Path(path))
+
+    def _assign_library_profile(self, path: Path) -> None:
+        """Replaces the current profile slot with a saved profile and writes it to
+        the device straight away (and takes the file name as the slot's name)."""
+        if not self._confirm_discard_if_dirty():
+            return
+        try:
+            self.profile = load_profile_file(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Profil nicht lesbar", f"{path}: {e}")
+            return
+        set_profile_name(self.profile_num, path.stem)
+        self._write_to_device()
+        self._refresh_all()
+        self._update_title()
 
     def _save_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(

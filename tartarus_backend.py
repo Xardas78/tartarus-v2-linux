@@ -387,6 +387,49 @@ class TartarusDevice:
 
 
 SAVED_PROFILES_PATH = Path.home() / ".config" / "tartarus" / "saved_profiles.json"
+PROFILE_NAMES_PATH = Path.home() / ".config" / "tartarus" / "profile_names.json"
+LIBRARY_DIR = Path.home() / ".config" / "tartarus" / "library"
+
+
+def load_profile_names() -> dict[int, str]:
+    try:
+        raw = json.loads(PROFILE_NAMES_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {int(k): str(v) for k, v in raw.items() if str(k).isdigit() and str(v).strip()}
+
+
+def set_profile_name(profile_num: int, name: str) -> None:
+    names = load_profile_names()
+    if name.strip():
+        names[profile_num] = name.strip()
+    else:
+        names.pop(profile_num, None)
+    PROFILE_NAMES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PROFILE_NAMES_PATH.write_text(json.dumps({str(k): v for k, v in names.items()}, indent=2))
+
+
+def list_library() -> list[Path]:
+    """Saved keyboard profiles (.json / .rz) in LIBRARY_DIR, sorted by name."""
+    if not LIBRARY_DIR.is_dir():
+        return []
+    return sorted((p for p in LIBRARY_DIR.iterdir() if p.suffix.lower() in (".json", ".rz")),
+                  key=lambda p: p.stem.lower())
+
+
+def load_profile_file(path: Path) -> Profile:
+    if Path(path).suffix.lower() == ".rz":
+        return Profile.from_bytes(Path(path).read_bytes())
+    return Profile.from_dict(json.loads(Path(path).read_text()))
+
+
+def save_to_library(name: str, profile: Profile) -> Path:
+    LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    safe = "".join(c if c.isalnum() or c in " -_." else "_" for c in name.strip()) or "Profil"
+    path = LIBRARY_DIR / f"{safe}.json"
+    path.write_text(json.dumps(profile.to_dict(), indent=2))
+    return path
+
 
 
 def save_profile_snapshot(

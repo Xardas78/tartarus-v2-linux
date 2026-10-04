@@ -92,6 +92,16 @@ Was dabei tatsächlich passiert, entscheidet der separate Wiedergabe-Dienst:
 
   Status prüfen: `systemctl --user status tartarus-macros.service`
 
+## Profilnamen und Profil-Bibliothek
+
+- **Umbenennen**: Button „Umbenennen…" neben der Profilauswahl (oder Datei → Profil umbenennen).
+  Die Namen stehen in `~/.config/tartarus/profile_names.json`.
+- **Bibliothek**: Datei → „Aktuelles Profil in Bibliothek speichern…" legt das Profil als JSON in
+  `~/.config/tartarus/library/` ab. Dort kannst du auch eigene `.json`- oder `.rz`-Dateien ablegen.
+- **Zuweisen**: Datei → „Gespeichertes Profil diesem Profil zuweisen" ersetzt das aktuell gewählte
+  Profil durch einen Bibliothekseintrag, schreibt es sofort aufs Gerät und übernimmt den Dateinamen
+  als Profilnamen. Die Mausrad-Belegung bleibt dabei unverändert.
+
 ## Bekannte Einschränkungen
 
 - Mausrad-Scrollen (hoch/runter) ist weiterhin fest verdrahtet, nicht konfigurierbar
